@@ -15,14 +15,6 @@ STAGE_ONLY=0
 [ -f rustos.conf ] && . ./rustos.conf
 
 # ----------------------------------------------------------------
-# Arch package database
-# ----------------------------------------------------------------
-echo "==> Updating Arch Linux package databases..."
-
-pacman -Sy --noconfirm archlinux-keyring
-pacman -Sy --noconfirm
-
-# ----------------------------------------------------------------
 # Builder user
 # ----------------------------------------------------------------
 id builder >/dev/null 2>&1 || useradd -m builder
@@ -207,12 +199,14 @@ echo "Signing with key $FPR"
 
 # ----------------------------------------------------------------
 # Build package
+# --nodeps is intentional: rustos-base is a meta-package.
+# Its dependencies are installed when RustOS itself is installed.
 # ----------------------------------------------------------------
 echo "==> Building rustos-base..."
 
 as_builder "
     cd '$WORK' &&
-    makepkg -f --noconfirm --sign --key '$FPR'
+    makepkg -f --nodeps --noconfirm --sign --key '$FPR'
 "
 
 # ----------------------------------------------------------------
