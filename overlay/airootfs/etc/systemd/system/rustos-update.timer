@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the RustOS automatic update every day
+
+[Timer]
+OnBootSec=10min
+OnUnitInactiveSec=1d
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target

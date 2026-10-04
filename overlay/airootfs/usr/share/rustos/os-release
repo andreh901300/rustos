@@ -1,0 +1,11 @@
+NAME="RustOS"
+PRETTY_NAME="RustOS"
+ID=rustos
+ID_LIKE=arch
+BUILD_ID=rolling
+ANSI_COLOR="38;2;255;140;50"
+HOME_URL="https://archlinux.org/"
+DOCUMENTATION_URL="https://wiki.archlinux.org/"
+SUPPORT_URL="https://bbs.archlinux.org/"
+BUG_REPORT_URL="https://gitlab.archlinux.org/groups/archlinux/-/issues"
+LOGO=rustos

@@ -1,0 +1,11 @@
+[Trigger]
+Operation = Upgrade
+Type = Package
+Target = grub
+Target = limine
+Target = refind
+
+[Action]
+Description = Refreshing the RustOS boot loader...
+When = PostTransaction
+Exec = /usr/local/bin/rustos-bootloader-update

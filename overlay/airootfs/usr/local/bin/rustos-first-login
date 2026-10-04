@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Runs once per user at first Plasma login: sets the RustOS wallpaper.
+MARK="$HOME/.config/rustos-branding-done"
+[ -e "$MARK" ] && exit 0
+sleep 5
+if plasma-apply-wallpaperimage /usr/share/rustos/wallpaper.png; then
+  mkdir -p "$HOME/.config" && touch "$MARK"
+fi

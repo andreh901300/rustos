@@ -1,0 +1,10 @@
+[Unit]
+Description=Create the RustOS live user
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/rustos-live-setup
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=RustOS welcome
+Exec=/usr/local/bin/rustos-welcome
+X-KDE-autostart-phase=2
+NoDisplay=true

@@ -1,0 +1,26 @@
+#!/bin/sh
+# Called by a pacman hook after grub / limine / refind are upgraded: refreshes the boot loader on disk
+# so a new boot loader version never gets out of sync with its files. Safe: failures never stop the update.
+[ -r /etc/rustos/bootloader.conf ] || exit 0
+# shellcheck disable=SC1091
+. /etc/rustos/bootloader.conf
+case "$BOOTLOADER" in
+  grub)
+    if [ "$UEFI" = 1 ]; then
+      grub-install --target=x86_64-efi --efi-directory="$ESP_DIR" --bootloader-id=RustOS --recheck || true
+      [ "$SHARED_ESP" = 1 ] || grub-install --target=x86_64-efi --efi-directory="$ESP_DIR" --removable --recheck || true
+    else
+      grub-install --target=i386-pc --recheck "$DISK" || true
+    fi
+    grub-mkconfig -o /boot/grub/grub.cfg || true ;;
+  limine)
+    if [ "$UEFI" = 1 ]; then
+      cp /usr/share/limine/BOOTX64.EFI /boot/EFI/BOOT/BOOTX64.EFI || true
+    else
+      cp /usr/share/limine/limine-bios.sys /boot/limine/ || true
+      limine bios-install "$DISK" || true
+    fi ;;
+  refind)
+    cp /usr/share/refind/refind_x64.efi /boot/EFI/BOOT/bootx64.efi || true ;;
+esac
+exit 0

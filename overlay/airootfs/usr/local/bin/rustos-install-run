@@ -1,0 +1,330 @@
+#!/usr/bin/env bash
+# RustOS easy installer, part 2 of 2: runs as root and installs everything automatically.
+set -Eeuo pipefail
+CONF="${1:?config file missing}"
+STATUS=/run/rustos-install.status
+LOG=/var/log/rustos-install.log
+echo RUNNING > "$STATUS"
+# shellcheck disable=SC1090
+source "$CONF"
+rm -f "$CONF"
+exec > >(tee -a "$LOG") 2>&1
+
+TOTAL=6
+step() { printf '\n\033[1;38;5;208m[%s/%s] %s\033[0m\n' "$1" "$TOTAL" "$2"; }
+fail() {
+  echo FAIL > "$STATUS"
+  printf '\n\033[1;31mSomething went wrong (script line %s).\033[0m\nThe log is saved at %s\n' "$1" "$LOG"
+  read -rp "Press Enter to close this window..." _ || true
+  exit 1
+}
+trap 'fail $LINENO' ERR
+
+UEFI=0; [ -d /sys/firmware/efi ] && UEFI=1
+MODE=${MODE:-whole}
+FSTYPE=${FSTYPE:-ext4}
+HOST_=${HOST_:-rustos}
+ROOT_PART=${ROOT_PART:-}
+ESP_PART=${ESP_PART:-}
+BOOTLOADER=${BOOTLOADER:-grub}
+# Dual boot / advanced: shared EFI partition -> GRUB only (it finds Windows and the other loaders won't fit a small ESP)
+SHARED_ESP=0
+if [ "$MODE" != whole ]; then BOOTLOADER=grub; SHARED_ESP=1; fi
+case "$BOOTLOADER" in grub|systemd-boot|limine|refind) ;; *) BOOTLOADER=grub ;; esac
+# systemd-boot and rEFInd need UEFI
+if [ "$UEFI" = 0 ] && { [ "$BOOTLOADER" = systemd-boot ] || [ "$BOOTLOADER" = refind ]; }; then BOOTLOADER=grub; fi
+# GRUB keeps the EFI partition at /boot/efi; the others read the kernel straight from it, so it IS /boot
+if [ "$UEFI" = 1 ] && [ "$BOOTLOADER" != grub ]; then ESP_DIR=/boot; else ESP_DIR=/boot/efi; fi
+part() { case "$DISK" in *[0-9]) echo "${DISK}p$1";; *) echo "${DISK}$1";; esac; }
+
+echo "RustOS installer - please don't close this window."
+echo "Mode: $MODE"
+echo "Installing to $DISK ($([ "$UEFI" = 1 ] && echo UEFI || echo BIOS) mode, boot loader: $BOOTLOADER)"
+
+# ---------------------------------------------------------------- 1
+step 1 "Getting ready"
+umount -R /mnt 2>/dev/null || true
+for p in $(lsblk -lnpo NAME "$DISK" | tail -n +2); do
+  swapoff "$p" 2>/dev/null || true
+  umount -f "$p" 2>/dev/null || true
+done
+for p in $ROOT_PART $ESP_PART; do umount -f "$p" 2>/dev/null || true; done
+if ! grep -q '^Server' /etc/pacman.d/mirrorlist; then
+  echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' >> /etc/pacman.d/mirrorlist
+fi
+if systemctl cat pacman-init.service >/dev/null 2>&1; then
+  for _ in $(seq 60); do
+    systemctl is-active --quiet pacman-init.service && break
+    sleep 2
+  done
+fi
+
+# ---------------------------------------------------------------- 2
+step 2 "Preparing the disk"
+ESP=""
+case "$MODE" in
+  whole)
+    wipefs -af "$DISK"
+    sgdisk --zap-all "$DISK"
+    if [ "$UEFI" = 1 ]; then
+      sgdisk -n1:0:+1G -t1:ef00 -c1:EFI -n2:0:0 -t2:8300 -c2:RustOS "$DISK"
+      ESP=$(part 1)
+    else
+      sgdisk -n1:0:+1M -t1:ef02 -c1:BIOS -n2:0:0 -t2:8300 -c2:RustOS "$DISK"
+    fi
+    ROOT=$(part 2)
+    partprobe "$DISK" || true
+    udevadm settle
+    sleep 2
+    if [ "$UEFI" = 1 ]; then mkfs.fat -F32 -n EFI "$ESP"; fi
+    ;;
+  free)
+    # Dual boot: keep everything, reuse Windows' EFI partition, make one new partition in the largest free space
+    ESP=$(lsblk -nrpo NAME,PARTTYPE "$DISK" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"{print $1; exit}')
+    [ -n "$ESP" ] || { echo "No EFI partition found on $DISK."; false; }
+    USED=$(sgdisk -p "$DISK" | awk '$1 ~ /^[0-9]+$/ {print $1}')
+    N=1
+    while printf '%s\n' "$USED" | grep -qx "$N"; do N=$((N + 1)); done
+    echo "Creating partition $N in the free space (nothing else is changed)..."
+    sgdisk -n "$N:0:0" -t "$N:8300" -c "$N:RustOS" "$DISK"
+    ROOT=$(part "$N")
+    partprobe "$DISK" || true
+    udevadm settle
+    sleep 2
+    ;;
+  manual)
+    ROOT="$ROOT_PART"
+    ESP="$ESP_PART"
+    ;;
+esac
+[ -b "$ROOT" ] || { echo "Partition $ROOT not found."; false; }
+case "$FSTYPE" in
+  btrfs) mkfs.btrfs -f -L RustOS "$ROOT" ;;
+  xfs)   mkfs.xfs -f -L RustOS "$ROOT" ;;
+  *)     mkfs.ext4 -F -q -L RustOS "$ROOT" ;;
+esac
+mount "$ROOT" /mnt
+if [ "$UEFI" = 1 ] && [ -n "$ESP" ]; then
+  mkdir -p "/mnt$ESP_DIR"
+  mount "$ESP" "/mnt$ESP_DIR"
+fi
+
+# ---------------------------------------------------------------- 3
+step 3 "Downloading and installing RustOS (the long part - go grab a coffee)"
+mapfile -t PKGS < <(grep -v '^\s*#' /usr/share/rustos/packages-installed.txt | sed '/^\s*$/d')
+BASE=(base linux linux-firmware intel-ucode amd-ucode grub efibootmgr os-prober)   # GRUB is always there as a safety net
+case "$BOOTLOADER" in limine) BASE+=(limine) ;; refind) BASE+=(refind) ;; esac
+case "$FSTYPE" in btrfs) BASE+=(btrfs-progs) ;; xfs) BASE+=(xfsprogs) ;; esac
+
+# --- RustOS update repository (optional): lets installed systems receive new RustOS versions automatically
+USE_REPO=0
+PACCONF=/etc/pacman.conf
+REPO_URL=""; REPO_FPR=""
+if [ -r /usr/share/rustos/repo.conf ] && [ -r /usr/share/rustos/rustos-pub.gpg ]; then
+  # shellcheck disable=SC1091
+  . /usr/share/rustos/repo.conf
+  if [ -n "${REPO_URL:-}" ] && [ -n "${REPO_FPR:-}" ]; then
+    echo "Checking the RustOS update repository..."
+    pacman-key --add /usr/share/rustos/rustos-pub.gpg >/dev/null 2>&1 || true
+    pacman-key --lsign-key "$REPO_FPR" >/dev/null 2>&1 || true
+    cp /etc/pacman.conf /tmp/pacman-rustos.conf
+    printf '\n[rustos]\nSigLevel = Required DatabaseRequired\nServer = %s/$arch\n' "$REPO_URL" >> /tmp/pacman-rustos.conf
+    if pacman --config /tmp/pacman-rustos.conf -Sy >/dev/null 2>&1 \
+       && pacman --config /tmp/pacman-rustos.conf -Si rustos/rustos-base >/dev/null 2>&1; then
+      USE_REPO=1; PACCONF=/tmp/pacman-rustos.conf; PKGS+=(rustos-base)
+      echo "RustOS repository OK - this system will receive RustOS updates automatically."
+    else
+      echo "RustOS repository not reachable - installing without it (no automatic RustOS updates)."
+    fi
+  fi
+fi
+PSARGS=(-C "$PACCONF")
+[ "$USE_REPO" = 1 ] || PSARGS+=(-K)      # with the repo, the live keyring (incl. the RustOS key) is copied instead
+
+ok=0
+for try in 1 2 3; do
+  if pacstrap "${PSARGS[@]}" /mnt "${BASE[@]}" "${PKGS[@]}"; then ok=1; break; fi
+  echo "Download problem - trying again ($try/3)..."
+  sleep 5
+done
+[ "$ok" = 1 ] || { echo "Could not download the packages. Check your internet connection."; false; }
+
+# ---------------------------------------------------------------- 4
+step 4 "Setting up your account and system"
+genfstab -U /mnt >> /mnt/etc/fstab
+
+# RustOS files: from the update repository when available (so they stay updatable), else copied from this disc
+if [ "$USE_REPO" = 1 ]; then
+  printf '\n[rustos]\nSigLevel = Required DatabaseRequired\nServer = %s/$arch\n' "$REPO_URL" >> /mnt/etc/pacman.conf
+else
+  mkdir -p /mnt/usr/share/rustos
+  cp -a /usr/share/rustos/. /mnt/usr/share/rustos/
+  install -Dm644 /usr/share/rustos/os-release                    /mnt/usr/lib/os-release
+  install -Dm644 /etc/skel/.config/fastfetch/config.jsonc        /mnt/etc/skel/.config/fastfetch/config.jsonc
+  install -Dm644 /etc/xdg/fastfetch/config.jsonc                 /mnt/etc/xdg/fastfetch/config.jsonc
+  install -Dm755 /usr/local/bin/rustos-first-login               /mnt/usr/local/bin/rustos-first-login
+  install -Dm755 /usr/local/bin/rustos-branding                  /mnt/usr/local/bin/rustos-branding
+  install -Dm755 /usr/local/bin/neofetch                         /mnt/usr/local/bin/neofetch
+  install -Dm644 /etc/pacman.d/hooks/rustos-branding.hook        /mnt/etc/pacman.d/hooks/rustos-branding.hook
+  install -Dm644 /etc/xdg/autostart/rustos-first-login.desktop   /mnt/etc/xdg/autostart/rustos-first-login.desktop
+  install -Dm644 /usr/share/pixmaps/rustos.png                   /mnt/usr/share/pixmaps/rustos.png
+  install -Dm644 /usr/share/icons/hicolor/scalable/apps/rustos.svg /mnt/usr/share/icons/hicolor/scalable/apps/rustos.svg
+  install -Dm755 /usr/local/bin/rustos-update             /mnt/usr/local/bin/rustos-update
+  install -Dm755 /usr/local/bin/rustos-autoupdate         /mnt/usr/local/bin/rustos-autoupdate
+  install -Dm755 /usr/local/bin/rustos-bootloader-update  /mnt/usr/local/bin/rustos-bootloader-update
+  install -Dm644 /etc/systemd/system/rustos-update.service /mnt/etc/systemd/system/rustos-update.service
+  install -Dm644 /etc/systemd/system/rustos-update.timer   /mnt/etc/systemd/system/rustos-update.timer
+  install -Dm644 /etc/pacman.d/hooks/rustos-bootloader.hook /mnt/etc/pacman.d/hooks/rustos-bootloader.hook
+fi
+install -Dm644 /etc/skel/.bashrc                               /mnt/etc/skel/.bashrc
+mkdir -p /mnt/etc/xdg/reflector
+printf -- '--save /etc/pacman.d/mirrorlist\n--protocol https\n--latest 20\n--sort rate\n' > /mnt/etc/xdg/reflector/reflector.conf
+printf 'RustOS \\r (\\l)\n\n' > /mnt/etc/issue
+
+cat > /mnt/etc/systemd/zram-generator.conf <<'EOF'
+[zram0]
+zram-size = min(ram / 2, 4096)
+compression-algorithm = zstd
+EOF
+
+arch-chroot /mnt /usr/bin/env \
+  RU="$RUSTOS_USER" FN="${FULLNAME//[:,]/ }" PH="$PASSHASH" TZ_="$TZ_" HOST_="$HOST_" \
+  bash -s <<'CHROOT'
+set -e
+ln -sf "/usr/share/zoneinfo/$TZ_" /etc/localtime
+hwclock --systohc 2>/dev/null || true
+sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' /etc/locale.gen
+locale-gen
+echo "LANG=en_US.UTF-8" > /etc/locale.conf
+echo "$HOST_" > /etc/hostname
+printf '127.0.0.1 localhost\n::1 localhost\n127.0.1.1 %s\n' "$HOST_" > /etc/hosts
+
+useradd -m -G wheel,audio,video -c "$FN" -s /bin/bash "$RU"
+echo "$RU:$PH" | chpasswd -e
+passwd -l root >/dev/null
+echo '%wheel ALL=(ALL:ALL) ALL' > /etc/sudoers.d/10-wheel
+chmod 440 /etc/sudoers.d/10-wheel
+
+systemctl enable sddm NetworkManager bluetooth systemd-timesyncd fstrim.timer
+systemctl enable rustos-update.timer reflector.timer paccache.timer
+if [ "$(systemd-detect-virt 2>/dev/null)" = microsoft ]; then
+  systemctl enable hv_kvp_daemon hv_vss_daemon hv_fcopy_daemon || true
+fi
+CHROOT
+
+# ---------------------------------------------------------------- 5
+step 5 "Installing the boot loader ($BOOTLOADER)"
+ROOT_UUID=$(blkid -s UUID -o value "$ROOT")
+arch-chroot /mnt /usr/bin/env UEFI="$UEFI" DISK="$DISK" ESP="${ESP:-}" ESP_DIR="$ESP_DIR" SHARED_ESP="$SHARED_ESP" \
+  ROOT_UUID="$ROOT_UUID" BOOTLOADER="$BOOTLOADER" bash -s <<'CHROOT'
+set -e
+KARGS="root=UUID=$ROOT_UUID rw quiet"
+USED="$BOOTLOADER"
+
+install_grub() {
+  sed -i 's/^GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR="RustOS"/' /etc/default/grub
+  if grep -q '^#\?GRUB_DISABLE_OS_PROBER' /etc/default/grub; then
+    sed -i 's/^#\?GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=false/' /etc/default/grub
+  else
+    echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
+  fi
+  if [ "$UEFI" = 1 ]; then
+    nvram_ok=1
+    grub-install --target=x86_64-efi --efi-directory="$ESP_DIR" --bootloader-id=RustOS --recheck || nvram_ok=0
+    if [ "$SHARED_ESP" != 1 ]; then
+      grub-install --target=x86_64-efi --efi-directory="$ESP_DIR" --removable --recheck || return 1
+    elif [ "$nvram_ok" = 0 ]; then
+      # Shared with another OS: only write the fallback loader if nobody else uses that file
+      [ ! -e "$ESP_DIR/EFI/BOOT/BOOTX64.EFI" ] || return 1
+      grub-install --target=x86_64-efi --efi-directory="$ESP_DIR" --removable --recheck || return 1
+    fi
+  else
+    grub-install --target=i386-pc --recheck "$DISK" || return 1
+  fi
+  grub-mkconfig -o /boot/grub/grub.cfg
+}
+
+install_systemd_boot() {
+  bootctl install --esp-path=/boot || bootctl install --esp-path=/boot --no-variables || return 1
+  mkdir -p /boot/loader/entries
+  printf 'default rustos.conf\ntimeout 3\nconsole-mode max\neditor no\n' > /boot/loader/loader.conf
+  for kind in "" "-fallback"; do
+    {
+      echo "title   RustOS${kind:+ (fallback)}"
+      echo "linux   /vmlinuz-linux"
+      echo "initrd  /intel-ucode.img"
+      echo "initrd  /amd-ucode.img"
+      echo "initrd  /initramfs-linux$kind.img"
+      echo "options $KARGS"
+    } > "/boot/loader/entries/rustos$kind.conf"
+  done
+  systemctl enable systemd-boot-update.service || true
+  [ -f /boot/EFI/systemd/systemd-bootx64.efi ]
+}
+
+install_limine() {
+  if [ "$UEFI" = 1 ]; then
+    mkdir -p /boot/EFI/BOOT
+    cp /usr/share/limine/BOOTX64.EFI /boot/EFI/BOOT/BOOTX64.EFI || return 1
+    CFG=/boot/EFI/BOOT/limine.conf; PFX=""
+  else
+    mkdir -p /boot/limine
+    cp /usr/share/limine/limine-bios.sys /boot/limine/ || return 1
+    limine bios-install "$DISK" || return 1
+    CFG=/boot/limine/limine.conf; PFX="/boot"
+  fi
+  cat > "$CFG" <<EOF
+timeout: 3
+
+/RustOS
+    protocol: linux
+    path: boot():$PFX/vmlinuz-linux
+    cmdline: $KARGS
+    module_path: boot():$PFX/intel-ucode.img
+    module_path: boot():$PFX/amd-ucode.img
+    module_path: boot():$PFX/initramfs-linux.img
+EOF
+}
+
+install_refind() {
+  refind-install --usedefault "$ESP" --yes || return 1
+  printf '"Boot RustOS" "%s initrd=/intel-ucode.img initrd=/amd-ucode.img initrd=/initramfs-linux.img"\n' "$KARGS" > /boot/refind_linux.conf
+  [ -f /boot/EFI/BOOT/bootx64.efi ]
+}
+
+case "$BOOTLOADER" in
+  systemd-boot) install_systemd_boot ;;
+  limine)       install_limine ;;
+  refind)       install_refind ;;
+  *)            install_grub ;;
+esac || {
+  echo
+  echo "!! $BOOTLOADER could not be set up - installing GRUB instead so the system still boots."
+  install_grub
+  USED=grub
+}
+mkdir -p /etc/rustos
+{
+  echo "BOOTLOADER=$USED"
+  echo "UEFI=$UEFI"
+  echo "DISK=$DISK"
+  echo "ESP_DIR=$ESP_DIR"
+  echo "SHARED_ESP=$SHARED_ESP"
+} > /etc/rustos/bootloader.conf
+CHROOT
+
+# ---------------------------------------------------------------- 6
+step 6 "Finishing"
+sync
+gpgconf --homedir /mnt/etc/pacman.d/gnupg --kill all 2>/dev/null || true
+pkill -f 'gpg-agent.*/mnt/etc/pacman.d/gnupg' 2>/dev/null || true
+pkill -f 'dirmngr.*/mnt/etc/pacman.d/gnupg' 2>/dev/null || true
+sleep 1
+if ! umount -R /mnt 2>/dev/null; then
+  fuser -km /mnt 2>/dev/null || true
+  sleep 2
+  umount -R /mnt 2>/dev/null || umount -Rl /mnt
+fi
+echo OK > "$STATUS"
+printf '\n\033[1;32mAll done! RustOS is installed.\033[0m This window closes in a moment...\n'
+sleep 4

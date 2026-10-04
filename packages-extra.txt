@@ -1,0 +1,76 @@
+# RustOS package list. Used for BOTH the live ISO and the installed system.
+# One package per line, "#" starts a comment. Lean on purpose: no bloat.
+
+# --- KDE Plasma desktop (lean, not the huge plasma-meta) ---
+plasma-desktop
+sddm
+sddm-kcm
+plasma-nm
+plasma-pa
+powerdevil
+kscreen
+bluedevil
+kde-gtk-config
+breeze-gtk
+xdg-desktop-portal-kde
+plasma-systemmonitor
+kwallet-pam
+
+# --- the few apps you actually need ---
+konsole
+dolphin
+kate
+ark
+gwenview
+spectacle
+firefox
+discover
+flatpak
+packagekit-qt6
+kdialog
+partitionmanager
+
+# --- sound, network, bluetooth ---
+pipewire
+pipewire-pulse
+pipewire-alsa
+wireplumber
+sof-firmware
+networkmanager
+bluez
+bluez-utils
+
+# --- fonts ---
+noto-fonts
+noto-fonts-emoji
+ttf-liberation
+
+# --- graphics ---
+mesa
+vulkan-radeon
+vulkan-intel
+xorg-xwayland
+
+# --- Windows disks ---
+ntfs-3g
+exfatprogs
+dosfstools
+
+# --- basics (pacman + AUR building) ---
+base-devel
+git
+sudo
+nano
+curl
+fastfetch
+xdg-user-dirs
+unzip
+zram-generator
+
+# --- automatic updates ---
+reflector
+pacman-contrib
+libnotify
+
+# --- Hyper-V guest tools (clipboard/time/shutdown from Hyper-V Manager) ---
+hyperv

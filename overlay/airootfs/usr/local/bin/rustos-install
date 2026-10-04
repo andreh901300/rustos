@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# RustOS easy installer, part 1 of 2: asks a few questions with normal windows.
+# Part 2 (rustos-install-run) does the actual install in a terminal window.
+TITLE="RustOS Installer"
+kd() { kdialog --title "$TITLE" --icon rustos "$@"; }
+die() { kd --error "$1"; exit 1; }
+
+[ -d /run/archiso ] || die "The installer only works from the RustOS live USB / ISO."
+command -v kdialog >/dev/null 2>&1 || { echo "kdialog is missing"; exit 1; }
+
+# --- 1. Welcome -------------------------------------------------------------
+kd --yes-label "Continue" --no-label "Cancel" --yesno \
+"<b>Welcome to RustOS!</b><br><br>
+Installing takes 3 easy steps:<br>
+&nbsp;1. Pick the disk<br>
+&nbsp;2. Create your account<br>
+&nbsp;3. Wait while everything installs (about 10-30 minutes)<br><br>
+You need an internet connection." || exit 0
+
+# --- 2. Internet ------------------------------------------------------------
+have_net() { curl -fsI --max-time 8 https://geo.mirror.pkgbuild.com >/dev/null 2>&1; }
+until have_net; do
+  kd --yes-label "Try again" --no-label "Cancel" --warningyesno \
+"<b>No internet connection.</b><br><br>
+Click the network icon in the bottom-right corner to connect to Wi-Fi, or plug in a cable.<br>
+In a virtual machine: make sure it has a network switch.<br><br>
+Then click Try again." || exit 0
+done
+
+# --- 3. Pick the disk -------------------------------------------------------
+BOOTDISK=""
+src=$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null || true)
+[ -n "$src" ] && BOOTDISK=$(lsblk -no PKNAME "$src" 2>/dev/null | head -n1)
+
+args=(); first=on
+while read -r name size type; do
+  [ "$type" = disk ] || continue
+  case "$name" in /dev/zram*|/dev/ram*|/dev/loop*) continue;; esac
+  [ -n "$BOOTDISK" ] && [ "$name" = "/dev/$BOOTDISK" ] && continue
+  model=$(lsblk -dno MODEL "$name" 2>/dev/null | sed 's/\\x20/ /g; s/  */ /g; s/^ //; s/ $//')
+  [ -n "$model" ] || model="Disk"
+  args+=("$name" "$size  -  $model" "$first"); first=off
+done < <(lsblk -dpnr -o NAME,SIZE,TYPE)
+
+[ "${#args[@]}" -gt 0 ] || die "No disk found to install on.<br><br>In a virtual machine, add a virtual hard disk (60 GB or more)."
+
+DISK=$(kd --radiolist "Where should RustOS be installed?<br><b>The whole disk will be erased.</b>" "${args[@]}") || exit 0
+[ -b "$DISK" ] || die "That disk isn't available any more."
+DISK_DESC=$(lsblk -dno SIZE,MODEL "$DISK" 2>/dev/null | sed 's/\\x20/ /g')
+
+# --- 3a. How to install ----------------------------------------------------
+MODE=whole; ROOT_PART=""; ESP_PART=""; FSTYPE=ext4; HOST_=rustos
+ESP_GUID="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+
+MODE=$(kd --radiolist "How do you want to install RustOS on <b>$DISK</b>?" \
+  whole  "Erase the whole disk and install RustOS (simplest)" on \
+  free   "Install next to Windows - dual boot (keeps Windows)" off \
+  manual "Advanced - I choose the partitions myself" off) || exit 0
+
+if [ "$MODE" = free ]; then
+  [ -d /sys/firmware/efi ] || die "Dual boot needs UEFI mode, and this computer started in old BIOS mode."
+  [ "$(lsblk -dno PTTYPE "$DISK" 2>/dev/null)" = gpt ] || die "Dual boot needs a GPT disk, and $DISK isn't one."
+  [ -n "$(lsblk -nrpo NAME,PARTTYPE "$DISK" | awk -v g="$ESP_GUID" 'tolower($2)==g{print $1; exit}')" ] \
+    || die "No Windows/EFI partition found on $DISK.<br><br>Pick the disk that has Windows on it."
+  FREEG=$(parted -ms "$DISK" unit GiB print free 2>/dev/null \
+    | awk -F: '{gsub(/;/,"",$5); if ($5=="free") {gsub(/GiB/,"",$4); if ($4+0>m) m=$4+0}} END{printf "%d", m}')
+  if [ "${FREEG:-0}" -lt 20 ]; then
+    die "Not enough free space on $DISK (found ${FREEG:-0} GB, need at least 20 GB).<br><br>In Windows, double-click <b>dualboot.bat</b> from the RustOS folder - it makes room safely.<br>Or use Disk Management: right-click C: and choose Shrink Volume."
+  fi
+  kd --msgbox "RustOS will be installed in the <b>${FREEG} GB of free space</b> on $DISK.<br><br>Windows and your files are not touched."
+fi
+
+if [ "$MODE" = manual ]; then
+  kd --yes-label "Open Partition Manager" --no-label "No, I'm ready" --yesno \
+"<b>Advanced install</b><br><br>You will pick an existing partition for RustOS. It will be <b>formatted</b>.<br><br>Need to create or resize partitions first?" \
+    && partitionmanager
+  list_parts() {  # $1 = "esp" to list only EFI partitions
+    local n sz fs lbl d
+    args=(); first=on
+    while read -r n; do
+      d=$(lsblk -no PKNAME "$n" 2>/dev/null | head -n1)
+      [ -n "$BOOTDISK" ] && [ "$d" = "$BOOTDISK" ] && continue
+      if [ "$1" = esp ]; then
+        [ "$(lsblk -dno PARTTYPE "$n" 2>/dev/null | tr 'A-Z' 'a-z')" = "$ESP_GUID" ] || continue
+      fi
+      sz=$(lsblk -dno SIZE "$n"); fs=$(lsblk -dno FSTYPE "$n"); lbl=$(lsblk -dno LABEL "$n" | sed 's/\\x20/ /g')
+      args+=("$n" "$sz  ${fs:-unformatted}  $lbl" "$first"); first=off
+    done < <(lsblk -lnrpo NAME,TYPE | awk '$2=="part"{print $1}')
+  }
+  list_parts all
+  [ "${#args[@]}" -gt 0 ] || die "No partitions found. Create one in Partition Manager first."
+  ROOT_PART=$(kd --radiolist "Which partition should RustOS be installed on?<br><b>It will be formatted (erased).</b>" "${args[@]}") || exit 0
+  if [ -d /sys/firmware/efi ]; then
+    list_parts esp
+    [ "${#args[@]}" -gt 0 ] || die "No EFI partition found.<br><br>Create a 512 MB FAT32 partition with the 'esp' flag in Partition Manager first."
+    ESP_PART=$(kd --radiolist "Which EFI partition should hold the boot loader?<br>(It is NOT formatted - other systems keep working.)" "${args[@]}") || exit 0
+  fi
+  FSTYPE=$(kd --radiolist "File system for RustOS:" \
+    ext4  "ext4 - classic and reliable (recommended)" on \
+    btrfs "btrfs - snapshots and compression" off \
+    xfs   "xfs - fast with big files" off) || exit 0
+  HOST_=$(kd --inputbox "Computer name:" "rustos") || exit 0
+  HOST_=$(printf '%s' "$HOST_" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9-' | cut -c1-30)
+  [ -n "$HOST_" ] || HOST_=rustos
+fi
+
+# --- 3b. Boot loader --------------------------------------------------------
+if [ "$MODE" != whole ]; then
+  BOOTLOADER=grub     # GRUB finds Windows and fits the small shared EFI partition
+else
+  if [ -d /sys/firmware/efi ]; then
+    BOOTLOADER=$(kd --radiolist "Which boot loader do you want?<br>Not sure? Keep <b>GRUB</b>." \
+      grub         "GRUB - recommended, works everywhere, finds Windows" on \
+      systemd-boot "systemd-boot - tiny and fast (UEFI only)" off \
+      limine       "Limine - modern and lightweight" off \
+      refind       "rEFInd - graphical menu with icons (UEFI only)" off) || exit 0
+  else
+    BOOTLOADER=$(kd --radiolist "Which boot loader do you want?<br>Not sure? Keep <b>GRUB</b>." \
+      grub   "GRUB - recommended, works everywhere" on \
+      limine "Limine - modern and lightweight" off) || exit 0
+  fi
+
+fi
+
+# --- 4. Account -------------------------------------------------------------
+FULLNAME=$(kd --inputbox "What's your name?" "") || exit 0
+FULLNAME=${FULLNAME//[:,<>&]/ }
+[ -n "${FULLNAME// /}" ] || FULLNAME="RustOS User"
+RUSTOS_USER=$(printf '%s' "$FULLNAME" | awk '{print tolower($1)}' | tr -cd 'a-z0-9' | cut -c1-30)
+[ -n "$RUSTOS_USER" ] || RUSTOS_USER="user"
+case "$RUSTOS_USER" in [0-9]*) RUSTOS_USER="u$RUSTOS_USER";; esac
+case "$RUSTOS_USER" in root|live|sddm|bin|daemon|nobody) RUSTOS_USER="${RUSTOS_USER}1";; esac
+
+while :; do
+  P1=$(kd --password "Choose a password for $RUSTOS_USER:") || exit 0
+  if [ -z "$P1" ]; then kd --sorry "The password can't be empty."; continue; fi
+  P2=$(kd --password "Type the password again to confirm:") || exit 0
+  [ "$P1" = "$P2" ] && break
+  kd --sorry "The two passwords didn't match. Please try again."
+done
+HASH=$(printf '%s' "$P1" | openssl passwd -6 -stdin)
+unset P1 P2
+
+# Time zone from your IP address (falls back to UTC)
+TZ_=$(curl -fs --max-time 5 https://ipapi.co/timezone 2>/dev/null || true)
+[ -f "/usr/share/zoneinfo/$TZ_" ] || TZ_=UTC
+
+# --- 5. Confirm -------------------------------------------------------------
+case "$MODE" in
+  whole)  WHERE="Disk: $DISK ($DISK_DESC)"; WARN="<b>Everything on this disk will be permanently erased.</b>"; BTN="Erase disk and install" ;;
+  free)   WHERE="Disk: $DISK ($DISK_DESC) - dual boot with the system already there"; WARN="RustOS goes into the free space. <b>Windows and your files are kept.</b>"; BTN="Install next to Windows" ;;
+  manual) WHERE="RustOS partition: $ROOT_PART ($FSTYPE)<br>EFI partition: ${ESP_PART:-none}"; WARN="<b>$ROOT_PART will be formatted (erased).</b> Everything else is kept."; BTN="Format and install" ;;
+esac
+kd --yes-label "$BTN" --no-label "Cancel" --warningyesno \
+"<b>Ready to install RustOS</b><br><br>
+$WHERE<br>
+Account: $FULLNAME (login name: $RUSTOS_USER)<br>
+Boot loader: $BOOTLOADER<br>
+Time zone: $TZ_<br><br>
+$WARN" || exit 0
+
+# --- 6. Hand over to the root part -----------------------------------------
+CONF=/run/rustos-install.conf
+sudo rm -f "$CONF" /run/rustos-install.status
+sudo install -m 600 /dev/null "$CONF"
+{
+  printf 'DISK=%q\n' "$DISK"
+  printf 'FULLNAME=%q\n' "$FULLNAME"
+  printf 'RUSTOS_USER=%q\n' "$RUSTOS_USER"
+  printf 'PASSHASH=%q\n' "$HASH"
+  printf 'TZ_=%q\n' "$TZ_"
+  printf 'BOOTLOADER=%q\n' "$BOOTLOADER"
+  printf 'MODE=%q\n' "$MODE"
+  printf 'ROOT_PART=%q\n' "$ROOT_PART"
+  printf 'ESP_PART=%q\n' "$ESP_PART"
+  printf 'FSTYPE=%q\n' "$FSTYPE"
+  printf 'HOST_=%q\n' "$HOST_"
+} | sudo tee "$CONF" >/dev/null
+
+konsole --nofork -e sudo /usr/local/bin/rustos-install-run "$CONF"
+
+if [ "$(cat /run/rustos-install.status 2>/dev/null)" = OK ]; then
+  kd --yes-label "Restart now" --no-label "Later" --yesno \
+"<b>RustOS is installed!</b><br><br>
+Click Restart now, then log in with the account you just created.<br><br>
+Real PC: remove the USB stick when the screen goes black." && sudo systemctl reboot
+else
+  kd --error "The installation did not finish.<br><br>The log is saved at /var/log/rustos-install.log"
+fi

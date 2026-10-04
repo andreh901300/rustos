@@ -1,0 +1,7 @@
+# NEVER commit these
+.secrets/
+# build output
+out/
+*.iso
+*.qcow2
+__pycache__/

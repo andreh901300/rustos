@@ -1,0 +1,4 @@
+// Live session only: the "live" user has no password, so let wheel members use admin tools (Partition Manager, Discover).
+polkit.addRule(function(action, subject) {
+    if (subject.user == "live") { return polkit.Result.YES; }
+});

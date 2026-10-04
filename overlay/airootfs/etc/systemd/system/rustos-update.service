@@ -1,0 +1,12 @@
+[Unit]
+Description=RustOS automatic update
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=!/run/archiso
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/rustos-update
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=3h

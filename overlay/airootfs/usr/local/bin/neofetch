@@ -1,0 +1,3 @@
+#!/bin/sh
+# RustOS: neofetch is replaced by fastfetch (same output, maintained).
+exec fastfetch "$@"

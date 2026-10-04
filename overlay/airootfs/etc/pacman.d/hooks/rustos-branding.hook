@@ -1,0 +1,11 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = filesystem
+Target = rustos-base
+
+[Action]
+Description = Re-applying RustOS branding...
+When = PostTransaction
+Exec = /usr/local/bin/rustos-branding

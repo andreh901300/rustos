@@ -1,0 +1,3 @@
+#!/bin/sh
+# Re-applies RustOS branding after package updates (called by a pacman hook).
+install -Dm644 /usr/share/rustos/os-release /usr/lib/os-release

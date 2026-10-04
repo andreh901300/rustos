@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Turn RustOS automatic updates on or off:  rustos-autoupdate on | off | status | now
+[ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
+case "${1:-status}" in
+  on)     systemctl enable --now rustos-update.timer && echo "Automatic updates are ON (daily, when online and plugged in)." ;;
+  off)    systemctl disable --now rustos-update.timer && echo "Automatic updates are OFF." ;;
+  now)    exec /usr/local/bin/rustos-update --now ;;
+  log)    tail -n 40 /var/log/rustos-update.log ;;
+  status)
+    if systemctl is-enabled --quiet rustos-update.timer; then echo "Automatic updates: ON"; else echo "Automatic updates: OFF"; fi
+    systemctl list-timers rustos-update.timer --no-pager 2>/dev/null | head -n 3
+    echo "Last run:"; grep '^===' /var/log/rustos-update.log 2>/dev/null | tail -n 1 || echo "  never" ;;
+  *)      echo "Usage: rustos-autoupdate on | off | status | now | log"; exit 1 ;;
+esac

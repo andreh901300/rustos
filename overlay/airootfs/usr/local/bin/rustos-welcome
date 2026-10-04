@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Shown once when the live desktop starts: offers to install straight away.
+sleep 6
+kdialog --title "Welcome to RustOS" --icon rustos \
+  --yes-label "Install RustOS" --no-label "Try it first" --yesno \
+"<b>Welcome to RustOS!</b><br><br>
+You are running RustOS from the live disk. Nothing has been installed or changed on your computer yet.<br><br>
+Do you want to install RustOS now?" && exec /usr/local/bin/rustos-install

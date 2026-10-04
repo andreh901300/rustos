@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=RustOS first login
+Exec=/usr/local/bin/rustos-first-login
+X-KDE-autostart-phase=2
+NoDisplay=true

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Runs at boot of the live ISO: creates the passwordless "live" user and enables autologin.
+id live >/dev/null 2>&1 || {
+  getent group wheel >/dev/null || groupadd wheel
+  useradd -m -G wheel,audio,video,storage -s /bin/bash live
+  passwd -d live
+}
+# X11 session is the safest in virtual machines; fall back to whatever exists.
+SESSION=plasma
+[ -f /usr/share/xsessions/plasmax11.desktop ] && SESSION=plasmax11
+mkdir -p /etc/sddm.conf.d
+printf '[Autologin]\nUser=live\nSession=%s\nRelogin=false\n' "$SESSION" > /etc/sddm.conf.d/10-autologin.conf
+# The build may have used a build-only pacman option; never ship it.
+sed -i '/^DisableSandbox/d' /etc/pacman.conf

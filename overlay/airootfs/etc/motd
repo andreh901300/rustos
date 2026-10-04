@@ -1,0 +1,3 @@
+Welcome to RustOS (live session)
+  - Double-click "Install RustOS" on the desktop to install to disk.
+  - Package manager: pacman   (sudo pacman -Syu, sudo pacman -S <name>)

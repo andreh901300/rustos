@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Install RustOS
+Comment=Install RustOS on this computer
+Exec=/usr/local/bin/rustos-install
+Icon=rustos
+Terminal=false
+Categories=System;
