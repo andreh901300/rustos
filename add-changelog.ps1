@@ -4,8 +4,13 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $cl   = Join-Path $root 'CHANGELOG.txt'
 $ver  = Join-Path $root 'VERSION'
-$msg  = $env:MSG
-$new  = $env:NEWVER
+$msg  = ($env:MSG -replace '[\r\n]+', ' ').Trim()
+if ($msg.Length -gt 120) { $msg = $msg.Substring(0, 120) }
+$new  = ("$env:NEWVER").Trim()
+if ($new -and $new -notmatch '^\d+(\.\d+){0,2}$') {
+  Write-Host "Version '$new' is not like 1.2 - keeping the old version number."
+  $new = ''
+}
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 
 $lines = New-Object System.Collections.Generic.List[string]

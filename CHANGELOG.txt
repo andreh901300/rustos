@@ -1,8 +1,8 @@
 RustOS change list. Newest on top. Installed systems show this in "What's new" after an update.
 Each "== RustOS x.y ==" line starts a version. publish.bat adds a line under the newest version for you.
 
-== RustOS - Arch base with pacman so every Arch package works ==
--  what did we add
+== RustOS 2.1 ==
+- alot
 
 == RustOS 1.1 ==
 - Update popup after every update, with a What's new button and a Restart now button
