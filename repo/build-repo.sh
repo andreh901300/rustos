@@ -124,7 +124,8 @@ fi
 echo "Signing with key $FPR"
 
 # ---------------------------------------------------------------- build + repo database
-as_builder "cd $WORK && makepkg -f --noconfirm --sign --key $FPR"
+# --nodeps on purpose: rustos-base is a meta-package; its dependencies get installed on the user's PC, not here.
+as_builder "cd $WORK && makepkg -f --nodeps --noconfirm --sign --key $FPR"
 as_builder "cd $WORK && repo-add --sign --key $FPR rustos.db.tar.zst rustos-base-*.pkg.tar.zst"
 
 rm -rf "$OUT" && mkdir -p "$OUT/x86_64"
