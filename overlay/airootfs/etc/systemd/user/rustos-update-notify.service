@@ -1,0 +1,12 @@
+[Unit]
+Description=Tell the user that RustOS was updated
+ConditionPathExists=!/run/archiso
+
+[Service]
+Type=oneshot
+# at login the desktop needs a moment before it can show popups
+ExecStartPre=/usr/bin/sleep 15
+ExecStart=/usr/local/bin/rustos-update-notify
+
+[Install]
+WantedBy=default.target

@@ -34,8 +34,7 @@ sudo pacman -S <package>  # install
 sudo pacman -Ss <word>    # search
 fastfetch                 # the RustOS banner (neofetch is an alias for it)
 ```
-Software centre: Discover (also installs Flatpak apps). For Steam enable `[multilib]` in `/etc/pacman.conf`.
-NVIDIA: `sudo pacman -S nvidia-open nvidia-utils`.
+Software centre: Discover (also installs Flatpak apps). Games: open **RustOS Gaming Setup** (see below).
 
 ## What is (not) in it
 
@@ -52,7 +51,7 @@ NVIDIA: `sudo pacman -S nvidia-open nvidia-utils`.
 
 - Not test-built by me: the first real build may need a small fix. Send me the first error line.
 - If the mouse or screen misbehaves in Hyper-V, send me what you see.
-- Secure Boot must be off. Whole-disk install only.
+- Secure Boot must be off.
 
 ## Hyper-V says "Not enough memory" (0x8007000E)
 
@@ -110,3 +109,38 @@ Arch is rolling: very rarely an update needs manual steps (see archlinux.org/new
 `rustos-base` (branding, tools, auto-updater, app list) is published as a signed package repository on
 GitHub Pages. Installed systems pull it with their daily update, so a new RustOS version reaches everyone
 without reinstalling. One-time setup: **GITHUB-SETUP.md**. Then each release is just **publish.bat**.
+
+## What users see when you release a new version
+
+After any update (the daily one, Discover, or a manual `pacman -Syu`) a popup appears:
+**"RustOS updated to 1.1"** with the top 3 lines of your change list, a **What's new** button and, if the
+kernel changed, a **Restart now** button. If the PC was off or the user logged out, the popup shows at the
+next login. It only shows once per update.
+
+Where the text comes from: `CHANGELOG.txt`. **publish.bat asks "What did you change?" and adds that line
+for you.** It also asks for a new version number: type one (like `1.2`) for a big release, or press Enter.
+
+The **RustOS Update Center** (app menu) shows the current version, checks for updates, installs them in a
+terminal window you can watch, shows What's new and the update history, and turns automatic updates on/off.
+
+What a release can change on everyone's PC: all RustOS scripts, branding, settings, the app list (new
+packages in `packages-extra.txt` get installed everywhere), the Update Center, the Gaming Setup, tuning.
+What it cannot change: files a user edited themselves, anything in their home folder that already exists,
+and the ISO file (only needed for brand-new installs).
+
+## Gaming
+
+Menu -> **RustOS Gaming Setup** (RustOS also asks once at first login). Tick what you want:
+Steam, GameMode + MangoHud + Gamescope, Lutris + Wine, Heroic, ProtonUp-Qt, Discord. It turns on 32-bit
+support, picks the graphics driver (AMD and Intel use Mesa; NVIDIA RTX / GTX 16 and newer use `nvidia-open`;
+older NVIDIA cards use the open Nouveau/NVK driver), and installs everything in one go. In Steam, set a
+game's launch options to `gamemoderun mangohud %command%`. It is optional on purpose, so RustOS stays light.
+Not useful inside Hyper-V (no real GPU there); it warns you.
+
+## Lightweight
+
+- No indexer (Baloo is off), no bloat apps, no sshd/cloud-init, a lean Plasma package list.
+- Compressed-RAM swap (zram) with matching memory settings, the right disk scheduler per disk type
+  (NVMe / SSD / hard disk), logs capped at 200 MB, and 15-second shutdown timeout.
+- `power-profiles-daemon` gives a Performance / Balanced / Power saver switch in the battery menu.
+- Check it yourself after a boot: `fastfetch` shows RAM used. Numbers differ per PC, so I have not promised any.

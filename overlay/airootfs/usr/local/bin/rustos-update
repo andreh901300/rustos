@@ -8,7 +8,8 @@ set -u
 LOG=/var/log/rustos-update.log
 exec 9>/run/rustos-update.lock
 flock -n 9 || { echo "Another update is already running."; exit 0; }
-exec >>"$LOG" 2>&1
+# started from a terminal (Update Center): show it on screen AND keep the log; from the timer: log only
+if [ -t 1 ]; then exec > >(tee -a "$LOG") 2>&1; else exec >>"$LOG" 2>&1; fi
 echo "=== $(date '+%F %T') ==="
 
 notify() {   # show a desktop notification to everyone logged in graphically
@@ -53,9 +54,9 @@ if command -v flatpak >/dev/null 2>&1; then
   flatpak update -y --noninteractive || true
 fi
 
+# the "RustOS updated" popup (what is new, restart button) comes from the pacman hook rustos-update-event
 if [ ! -d "/usr/lib/modules/$(uname -r)" ]; then
   echo "Kernel was updated - restart needed."
-  notify "RustOS was updated. Restart when you can to finish the update."
 else
   echo "Update finished."
 fi

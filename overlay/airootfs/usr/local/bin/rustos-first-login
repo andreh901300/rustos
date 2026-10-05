@@ -1,8 +1,21 @@
 #!/usr/bin/env bash
-# Runs once per user at first Plasma login: sets the RustOS wallpaper.
-MARK="$HOME/.config/rustos-branding-done"
-[ -e "$MARK" ] && exit 0
+# Runs at Plasma login until done: sets the RustOS wallpaper once, then asks ONCE about gaming.
 sleep 5
-if plasma-apply-wallpaperimage /usr/share/rustos/wallpaper.png; then
-  mkdir -p "$HOME/.config" && touch "$MARK"
+MARK="$HOME/.config/rustos-branding-done"
+if [ ! -e "$MARK" ]; then
+  if plasma-apply-wallpaperimage /usr/share/rustos/wallpaper.png; then
+    mkdir -p "$HOME/.config" && touch "$MARK"
+  fi
 fi
+
+# the live disk is only for trying and installing
+[ -d /run/archiso ] && exit 0
+GMARK="$HOME/.config/rustos-gaming-asked"
+[ -e "$GMARK" ] && exit 0
+[ -x /usr/local/bin/rustos-gaming ] || exit 0
+sleep 25
+mkdir -p "$HOME/.config" && touch "$GMARK"
+kdialog --title "RustOS" --icon rustos --yes-label "Set up gaming" --no-label "Not now" --yesno \
+  "<b>Do you play games on this PC?</b><br><br>RustOS can set up Steam, the right graphics driver and performance tools in a few clicks.<br><br>You can also do this later: open the menu and search for <b>RustOS Gaming Setup</b>." \
+  && /usr/local/bin/rustos-gaming
+exit 0

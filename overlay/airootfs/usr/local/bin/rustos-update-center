@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# RustOS Update Center: check for updates, install them, see what's new, switch automatic updates.
+# Start it from the app menu ("RustOS Update Center") or run:  rustos-update-center
+CL=/usr/share/rustos/CHANGELOG.txt
+T="RustOS Update Center"
+
+current_version() {
+  local v
+  v=$(pacman -Q rustos-base 2>/dev/null | awk '{print $2}')
+  if [ -n "$v" ]; then v=${v%-*}; echo "${v%.*}"; return; fi
+  sed -n 's/^== RustOS \(.*\) ==.*/\1/p' "$CL" 2>/dev/null | head -n 1
+}
+
+whatsnew() {
+  if [ -r "$CL" ]; then
+    kdialog --title "What's new in RustOS" --icon rustos --textbox "$CL" 680 500
+  else
+    kdialog --title "$T" --icon rustos --msgbox "No list of changes was found on this system."
+  fi
+}
+
+if [ "${1:-}" = --whatsnew ]; then whatsnew; exit 0; fi
+
+if [ -d /run/archiso ]; then
+  kdialog --title "$T" --icon rustos --msgbox "This is the live disk, so there is nothing to update here.<br>Install RustOS first. After that, updates come by themselves."
+  exit 0
+fi
+
+install_now() {
+  # shows the update in a terminal window so you can see it work; asks for your password there
+  konsole --nofork --title "RustOS update" -e bash -c \
+    'sudo /usr/local/bin/rustos-update --now; echo; read -r -p "Finished. Press Enter to close this window. " _'
+  # afterwards the update hook shows the popup with the What is new and Restart buttons
+}
+
+check_updates() {
+  local out rc n extra=""
+  kdialog --title "$T" --passivepopup "Looking for updates..." 3 2>/dev/null
+  out=$(checkupdates 2>/dev/null); rc=$?
+  case $rc in
+    2) kdialog --title "$T" --icon rustos --msgbox "<b>You are up to date.</b><br>Nothing to install right now." ;;
+    0) n=$(printf '%s\n' "$out" | wc -l)
+       grep -q '^rustos-base ' <<<"$out" && extra="<br><br>This includes a <b>new RustOS version</b>."
+       kdialog --title "$T" --icon rustos --yes-label "Install now" --no-label "Not now" \
+         --yesno "<b>$n updates are available.</b>$extra<br><br>Install them now? It takes a few minutes and you can keep working." \
+         && install_now ;;
+    *) kdialog --title "$T" --icon rustos --msgbox "Could not check for updates.<br>Are you online?" ;;
+  esac
+}
+
+show_log() {
+  local f
+  f=$(mktemp)
+  { echo "Last lines of /var/log/rustos-update.log"; echo; tail -n 80 /var/log/rustos-update.log 2>/dev/null || echo "(no updates yet)"; } > "$f"
+  kdialog --title "$T" --icon rustos --textbox "$f" 700 500
+  rm -f "$f"
+}
+
+while true; do
+  state=OFF; other=ON
+  if systemctl is-enabled --quiet rustos-update.timer 2>/dev/null; then state=ON; other=OFF; fi
+  last=$(grep '^===' /var/log/rustos-update.log 2>/dev/null | tail -n 1 | tr -d '=' | sed 's/^ *//; s/ *$//')
+  choice=$(kdialog --title "$T" --icon rustos \
+    --menu "RustOS $(current_version)"$'\n'"Automatic updates: $state"$'\n'"Last automatic update: ${last:-never}" \
+      check "Check for updates and install" \
+      new   "What's new in RustOS" \
+      auto  "Turn automatic updates $other" \
+      games "Gaming setup (Steam, drivers, performance tools)" \
+      log   "Update history") || exit 0
+  case "$choice" in
+    check) check_updates ;;
+    new)   whatsnew ;;
+    auto)  pkexec /usr/local/bin/rustos-autoupdate "$(echo "$other" | tr 'A-Z' 'a-z')" >/dev/null 2>&1 ;;
+    games) /usr/local/bin/rustos-gaming ;;
+    log)   show_log ;;
+  esac
+done

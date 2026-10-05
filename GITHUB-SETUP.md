@@ -80,3 +80,12 @@ Add an app: put its Arch package name in `packages-extra.txt` -> publish -> it a
   that install just won't get RustOS updates (only the normal Arch ones).
 - Systems installed from an ISO built BEFORE this setup keep working but never get RustOS updates;
   re-install them once.
+
+## Releasing a new version (what happens)
+
+1. Change anything (scripts, packages-extra.txt, branding, ...).
+2. Double-click **publish.bat**. Type what you changed (this becomes a line in the "What's new" popup).
+   Type a new version number for a big release (like `1.2`), or press Enter.
+3. GitHub builds and signs the update in about 3 minutes (Actions tab).
+4. Every installed RustOS gets it with its next daily update, and shows the "RustOS updated" popup.
+   Right away: `sudo rustos-autoupdate now`, or Update Center -> Check for updates.

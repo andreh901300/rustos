@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=RustOS Update Center
+Comment=Check for updates, see what's new, switch automatic updates
+Exec=/usr/local/bin/rustos-update-center
+Icon=rustos
+Terminal=false
+Categories=System;Settings;

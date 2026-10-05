@@ -54,6 +54,7 @@ cp -a "$HERE/overlay/airootfs/." "$AIR/"
 mkdir -p "$AIR/usr/share/rustos" "$AIR/usr/share/pixmaps" "$AIR/usr/share/icons/hicolor/scalable/apps"
 cp "$HERE"/branding/*.png "$HERE"/branding/logo.svg "$AIR/usr/share/rustos/"
 cp "$HERE/packages-extra.txt" "$AIR/usr/share/rustos/packages-installed.txt"
+cp "$HERE/CHANGELOG.txt" "$AIR/usr/share/rustos/CHANGELOG.txt"
 # RustOS update channel (optional): written by repo-setup.bat into rustos.conf
 if [ -f "$HERE/rustos.conf" ] && [ -f "$HERE/repo/rustos-pub.gpg" ]; then
   grep -E '^(REPO_URL|REPO_FPR)=' "$HERE/rustos.conf" > "$AIR/usr/share/rustos/repo.conf"
@@ -88,6 +89,10 @@ file_permissions+=(
   ["/usr/local/bin/rustos-update"]="0:0:755"
   ["/usr/local/bin/rustos-autoupdate"]="0:0:755"
   ["/usr/local/bin/rustos-bootloader-update"]="0:0:755"
+  ["/usr/local/bin/rustos-update-event"]="0:0:755"
+  ["/usr/local/bin/rustos-update-notify"]="0:0:755"
+  ["/usr/local/bin/rustos-update-center"]="0:0:755"
+  ["/usr/local/bin/rustos-gaming"]="0:0:755"
   ["/etc/sudoers.d/10-wheel"]="0:0:440"
   ["/etc/skel/Desktop/install-rustos.desktop"]="0:0:755"
 )

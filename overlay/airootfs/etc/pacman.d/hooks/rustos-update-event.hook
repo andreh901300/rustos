@@ -1,0 +1,10 @@
+[Trigger]
+Operation = Upgrade
+Type = Package
+Target = *
+
+[Action]
+Description = Telling the desktop about the update...
+When = PostTransaction
+Exec = /usr/local/bin/rustos-update-event
+NeedsTargets

@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for RustOS updates
+ConditionPathExists=!/run/archiso
+
+[Path]
+PathChanged=/var/lib/rustos/update-event
+
+[Install]
+WantedBy=default.target

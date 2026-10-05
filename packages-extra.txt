@@ -56,6 +56,10 @@ ntfs-3g
 exfatprogs
 dosfstools
 
+# --- gaming-ready basics (Steam etc. is installed on request by RustOS Gaming Setup) ---
+power-profiles-daemon
+pciutils
+
 # --- basics (pacman + AUR building) ---
 base-devel
 git

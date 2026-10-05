@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# RustOS Gaming Setup. Start it from the app menu ("RustOS Gaming Setup") or run:  rustos-gaming
+# Part 1 (you, in a window): asks what you want.
+# Part 2 (root, in a terminal window): turns on 32-bit support, installs graphics drivers and your picks.
+
+# ============================================================== part 2: the installing (root)
+if [ "${1:-}" = --install ]; then
+  shift
+  [ "$(id -u)" = 0 ] || exec sudo "$0" --install "$@"
+  rm -f /run/rustos-gaming.status
+  want=" $* "
+  has() { case "$want" in *" $1 "*) return 0 ;; esac; return 1; }
+  fail() { echo; echo "Something went wrong: $1"; echo "failed" > /run/rustos-gaming.status; exit 1; }
+
+  echo "== Turning on 32-bit support (needed by Steam and many games)"
+  if ! grep -q '^\[multilib\]' /etc/pacman.conf; then
+    if grep -q '^#\[multilib\]' /etc/pacman.conf; then
+      sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf
+    else
+      printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
+    fi
+  fi
+  pacman -Sy --noconfirm || fail "could not reach the package servers. Are you online?"
+
+  echo "== Looking at your graphics card"
+  gpus=$(lspci -nn 2>/dev/null | grep -Ei 'vga|3d controller|display controller' || true)
+  echo "${gpus:-  (no graphics card found - this looks like a virtual machine)}"
+  amd=0; intel=0; nv=0
+  grep -q '\[1002:' <<<"$gpus" && amd=1
+  grep -q '\[8086:' <<<"$gpus" && intel=1
+  grep -q '\[10de:' <<<"$gpus" && nv=1
+
+  pkgs=(lib32-mesa)
+  [ "$amd" = 1 ]   && pkgs+=(vulkan-radeon lib32-vulkan-radeon)
+  [ "$intel" = 1 ] && pkgs+=(vulkan-intel lib32-vulkan-intel)
+  if [ "$nv" = 1 ]; then
+    if has nvidia; then
+      pkgs+=(nvidia-open nvidia-utils lib32-nvidia-utils nvidia-settings)
+      { [ "$amd" = 1 ] || [ "$intel" = 1 ]; } && pkgs+=(nvidia-prime)
+    else
+      pkgs+=(vulkan-nouveau lib32-vulkan-nouveau)
+    fi
+  fi
+  if [ "$amd$intel$nv" = 000 ]; then pkgs+=(vulkan-swrast lib32-vulkan-swrast); fi
+
+  has steam  && pkgs+=(steam)
+  has tools  && pkgs+=(gamemode lib32-gamemode mangohud lib32-mangohud gamescope)
+  has lutris && pkgs+=(lutris wine winetricks)
+
+  # only ask for packages that exist (a wrong name must not break the whole thing)
+  ok=()
+  for p in "${pkgs[@]}"; do
+    if pacman -Si "$p" >/dev/null 2>&1; then ok+=("$p"); else echo "  (skipping $p - not in the repositories)"; fi
+  done
+  echo "== Installing: ${ok[*]}"
+  pacman -Su --noconfirm --needed "${ok[@]}" || fail "the package install failed (see the lines above)."
+
+  # GameMode wants your user in its group
+  if [ -n "${SUDO_USER:-}" ] && getent group gamemode >/dev/null 2>&1; then
+    usermod -aG gamemode "$SUDO_USER" || true
+  fi
+
+  # Flatpak apps
+  flat=()
+  has heroic   && flat+=(com.heroicgameslauncher.hgl)
+  has protonup && flat+=(net.davidotek.pupgui2)
+  has discord  && flat+=(com.discordapp.Discord)
+  if [ "${#flat[@]}" -gt 0 ]; then
+    echo "== Installing Flatpak apps: ${flat[*]}"
+    if ! command -v flatpak >/dev/null 2>&1; then pacman -S --noconfirm --needed flatpak || fail "flatpak is missing."; fi
+    flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
+    for id in "${flat[@]}"; do
+      flatpak install -y --noninteractive flathub "$id" || echo "  (could not install $id - try again later from Discover)"
+    done
+  fi
+
+  mkdir -p /var/lib/rustos
+  echo "$*" > /var/lib/rustos/gaming-installed
+  echo "ok" > /run/rustos-gaming.status
+  echo
+  echo "All done."
+  exit 0
+fi
+
+# ============================================================== part 1: the questions (you)
+T="RustOS Gaming Setup"
+if [ -d /run/archiso ]; then
+  kdialog --title "$T" --icon rustos --msgbox "Gaming setup is for the installed RustOS.<br>Install RustOS first, then open this again."
+  exit 0
+fi
+
+virt=$(systemd-detect-virt 2>/dev/null || true)
+if [ -n "$virt" ] && [ "$virt" != none ]; then
+  kdialog --title "$T" --icon rustos --warningcontinuecancel \
+    "RustOS is running inside a virtual machine ($virt).<br>There is no real graphics card here, so games will be very slow.<br><br>Set it up anyway (for example to test)?" || exit 0
+fi
+
+gpus=$(lspci -nn 2>/dev/null | grep -Ei 'vga|3d controller|display controller' || true)
+gpuname=$(head -n 1 <<<"$gpus" | sed 's/^[^ ]* //; s/\[[0-9a-f]\{4\}:[0-9a-f]\{4\}\]//; s/(rev [0-9a-f]*)//' | cut -c1-80)
+
+mapfile -t picked < <(kdialog --title "$T" --icon rustos --separate-output --checklist \
+  "Pick what you want. Everything is optional."$'\n'"Graphics card: ${gpuname:-not found}" \
+  steam    "Steam (plays Windows games with Proton)" on \
+  tools    "Performance tools: GameMode, MangoHud overlay, Gamescope" on \
+  lutris   "Lutris + Wine (other Windows game launchers)" off \
+  heroic   "Heroic Games Launcher (Epic, GOG, Amazon)" off \
+  protonup "ProtonUp-Qt (download GE-Proton for more games)" off \
+  discord  "Discord" off) || exit 0
+[ "${#picked[@]}" -gt 0 ] || exit 0
+
+if grep -q '\[10de:' <<<"$gpus"; then
+  if kdialog --title "$T" --icon rustos --yes-label "Yes (RTX, or GTX 16 series, or newer)" --no-label "No / not sure" --yesno \
+    "An NVIDIA graphics card was found.<br><br>Is it a GeForce <b>RTX</b>, a <b>GTX 16</b> series, or newer?<br><br>The NVIDIA driver RustOS installs only supports those. On an older card (GTX 10 series or older) choose No and the built-in driver is used."; then
+    picked+=(nvidia)
+  fi
+fi
+
+kdialog --title "$T" --icon rustos --yes-label "Install" --no-label "Cancel" --yesno \
+  "Ready to install.<br>This downloads a few GB and takes a few minutes.<br>A terminal window will show the progress and ask for your password." || exit 0
+
+rm -f /run/rustos-gaming.status
+konsole --nofork --title "RustOS Gaming Setup" -e bash -c \
+  'sudo /usr/local/bin/rustos-gaming --install "$@"; echo; read -r -p "Press Enter to close this window. " _' _ "${picked[@]}"
+
+if [ "$(cat /run/rustos-gaming.status 2>/dev/null)" = ok ]; then
+  extra=""
+  case " ${picked[*]} " in *" nvidia "*) extra="<br><br><b>Restart your computer</b> once so the NVIDIA driver is used." ;; esac
+  kdialog --title "$T" --icon rustos --msgbox \
+    "<b>Gaming setup finished!</b>$extra<br><br>In Steam: right-click a game, Properties, Launch Options, and type:<br><tt>gamemoderun mangohud %command%</tt><br>That turns on GameMode and the performance overlay.<br><br>For games that need it, use Properties, Compatibility, and tick a Proton version."
+else
+  kdialog --title "$T" --icon rustos --sorry \
+    "The setup did not finish. Scroll the terminal window for the first error, or run it again from the menu."
+fi
+exit 0

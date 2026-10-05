@@ -1,0 +1,17 @@
+RustOS change list. Newest on top. Installed systems show this in "What's new" after an update.
+Each "== RustOS x.y ==" line starts a version. publish.bat adds a line under the newest version for you.
+
+== RustOS - Arch base with pacman so every Arch package works ==
+-  what did we add
+
+== RustOS 1.1 ==
+- Update popup after every update, with a What's new button and a Restart now button
+- RustOS Update Center in the app menu: check, install, history, automatic updates on or off
+- RustOS Gaming Setup: Steam, GameMode, MangoHud, Gamescope, Lutris, Heroic, ProtonUp-Qt, Discord
+- Gaming setup picks the right graphics driver for AMD, Intel and NVIDIA cards
+- Lighter and faster: file indexer off, smarter memory and disk settings, smaller logs, quicker shutdown
+- Performance mode in the battery menu (power-profiles-daemon)
+
+== RustOS 1.0 ==
+- First version: Arch base with pacman, KDE Plasma, RustOS logo, easy installer, dual boot, boot loader choice
+- Automatic daily updates and the signed RustOS update channel

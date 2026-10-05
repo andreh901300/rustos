@@ -13,9 +13,19 @@ if not exist ".git" (
   pause
   exit /b 1
 )
+set "DIRTY="
+for /f "delims=" %%i in ('git status --porcelain') do set "DIRTY=1"
+if not defined DIRTY (
+  echo Nothing changed since the last publish.
+  pause
+  exit /b 0
+)
 set "MSG="
-set /p MSG=What did you change? (a few words): 
+set /p MSG=What did you change? (a few words, people will see this in the update popup): 
 if "%MSG%"=="" set "MSG=update"
+set "NEWVER="
+set /p NEWVER=New version number? (like 1.2, or just press Enter to keep the same version): 
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0add-changelog.ps1"
 git add -A
 git diff --cached --quiet && (
   echo Nothing changed since the last publish.

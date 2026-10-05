@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Runs inside your desktop session (systemd user unit rustos-update-notify), at login and whenever an
+# update happened. Shows a popup: "RustOS updated to X" + what's new + a Restart button if needed.
+EV=/var/lib/rustos/update-event
+CL=/usr/share/rustos/CHANGELOG.txt
+[ -d /run/archiso ] && exit 0
+[ -r "$EV" ] || exit 0
+
+get() { sed -n "s/^$1=//p" "$EV" | head -n 1; }
+time=$(get TIME)
+[ -n "$time" ] || exit 0
+
+state="${XDG_STATE_HOME:-$HOME/.local/state}/rustos"
+mkdir -p "$state"
+[ "$(cat "$state/seen-update" 2>/dev/null)" = "$time" ] && exit 0     # already shown
+echo "$time" > "$state/seen-update"
+
+count=$(get COUNT); rustos=$(get RUSTOS); reboot=$(get REBOOT); ver=$(get VERSION)
+ver=${ver%-*}; ver=${ver%.*}                                            # 1.1.202610051200-1 -> 1.1
+
+actions=()
+if [ "$rustos" = 1 ]; then
+  title="RustOS updated to $ver"
+  body=$(awk '/^== /{n++; next} n==1 && /^- /{print; if (++c==3) exit}' "$CL" 2>/dev/null)
+  [ -n "$body" ] || body="${count:-0} packages updated."
+  actions+=(-A "whatsnew=What's new")
+else
+  [ "${count:-0}" -gt 0 ] || [ "$reboot" = 1 ] || exit 0
+  title="RustOS was updated"
+  body="${count:-0} packages updated in the background."
+fi
+if [ "$reboot" = 1 ]; then
+  body="$body"$'\n'"Restart to finish the update."
+  actions+=(-A "restart=Restart now")
+fi
+
+# the popup waits for a click on a button (or until it disappears)
+choice=$(notify-send -a RustOS -i rustos -t 30000 "${actions[@]}" "$title" "$body" 2>/dev/null) \
+  || { notify-send -a RustOS -i rustos "$title" "$body" 2>/dev/null; exit 0; }
+
+case "$choice" in
+  whatsnew) exec /usr/local/bin/rustos-update-center --whatsnew ;;
+  restart)  kdialog --title "RustOS" --icon rustos --yesno "Restart now to finish the update?<br>Save your work first." && systemctl reboot ;;
+esac
+exit 0

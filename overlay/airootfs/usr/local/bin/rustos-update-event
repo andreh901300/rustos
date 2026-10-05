@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# pacman hook (rustos-update-event.hook): runs once after every package upgrade, whoever started it
+# (the daily auto-update, Discover, or a manual "pacman -Syu").
+# It leaves a small note in /var/lib/rustos/update-event. rustos-update-notify (in your desktop session)
+# sees the note and shows the "RustOS updated" popup.
+[ -d /run/archiso ] && exit 0
+
+count=0; rustos=0
+while read -r p; do
+  [ -n "$p" ] || continue
+  count=$((count + 1))
+  [ "$p" = rustos-base ] && rustos=1
+done
+
+reboot=0
+[ -d "/usr/lib/modules/$(uname -r)" ] || reboot=1      # running kernel was replaced on disk
+
+ver=$(pacman -Q rustos-base 2>/dev/null | awk '{print $2}')
+
+mkdir -p /var/lib/rustos
+{
+  echo "TIME=$(date +%s)"
+  echo "COUNT=$count"
+  echo "RUSTOS=$rustos"
+  echo "REBOOT=$reboot"
+  echo "VERSION=${ver:-unknown}"
+} > /var/lib/rustos/update-event
+chmod 644 /var/lib/rustos/update-event
+exit 0

@@ -20,13 +20,30 @@ P="$WORK/payload"
 put() { # put <mode> <source> <destination-in-package>
   install -Dm"$1" "$2" "$P/$3"
 }
-for f in neofetch rustos-branding rustos-first-login rustos-update rustos-autoupdate rustos-bootloader-update; do
+for f in neofetch rustos-branding rustos-first-login rustos-update rustos-autoupdate rustos-bootloader-update \
+         rustos-update-event rustos-update-notify rustos-update-center rustos-gaming; do
   put 755 "$OV/usr/local/bin/$f" "usr/local/bin/$f"
 done
 put 644 "$OV/etc/systemd/system/rustos-update.service" etc/systemd/system/rustos-update.service
 put 644 "$OV/etc/systemd/system/rustos-update.timer"   etc/systemd/system/rustos-update.timer
 put 644 "$OV/etc/pacman.d/hooks/rustos-branding.hook"   etc/pacman.d/hooks/rustos-branding.hook
 put 644 "$OV/etc/pacman.d/hooks/rustos-bootloader.hook" etc/pacman.d/hooks/rustos-bootloader.hook
+put 644 "$OV/etc/pacman.d/hooks/rustos-update-event.hook" etc/pacman.d/hooks/rustos-update-event.hook
+put 644 "$OV/etc/systemd/user/rustos-update-notify.path"    etc/systemd/user/rustos-update-notify.path
+put 644 "$OV/etc/systemd/user/rustos-update-notify.service" etc/systemd/user/rustos-update-notify.service
+put 644 "$OV/usr/share/applications/rustos-update-center.desktop" usr/share/applications/rustos-update-center.desktop
+put 644 "$OV/usr/share/applications/rustos-gaming.desktop"        usr/share/applications/rustos-gaming.desktop
+put 644 "$OV/etc/sysctl.d/99-rustos.conf"                         etc/sysctl.d/99-rustos.conf
+put 644 "$OV/etc/udev/rules.d/60-rustos-ioschedulers.rules"       etc/udev/rules.d/60-rustos-ioschedulers.rules
+put 644 "$OV/etc/systemd/journald.conf.d/rustos.conf"             etc/systemd/journald.conf.d/rustos.conf
+put 644 "$OV/etc/systemd/system.conf.d/rustos.conf"               etc/systemd/system.conf.d/rustos.conf
+put 644 "$OV/etc/skel/.config/baloofilerc"                        etc/skel/.config/baloofilerc
+put 644 CHANGELOG.txt                                             usr/share/rustos/CHANGELOG.txt
+# start the update popup helper in every user session (same as "systemctl --global enable")
+mkdir -p "$P/etc/systemd/user/default.target.wants"
+ln -s ../rustos-update-notify.path    "$P/etc/systemd/user/default.target.wants/rustos-update-notify.path"
+ln -s ../rustos-update-notify.service "$P/etc/systemd/user/default.target.wants/rustos-update-notify.service"
+install -dm755 "$P/var/lib/rustos"
 put 644 "$OV/etc/xdg/fastfetch/config.jsonc"            etc/xdg/fastfetch/config.jsonc
 put 644 "$OV/etc/skel/.config/fastfetch/config.jsonc"   etc/skel/.config/fastfetch/config.jsonc
 put 644 "$OV/etc/xdg/autostart/rustos-first-login.desktop" etc/xdg/autostart/rustos-first-login.desktop
@@ -39,7 +56,8 @@ put 644 branding/logo-256.png usr/share/pixmaps/rustos.png
 put 644 branding/logo.svg     usr/share/icons/hicolor/scalable/apps/rustos.svg
 # Windows line endings would break the scripts
 find "$P" -type f \( -path '*/usr/local/bin/*' -o -name '*.hook' -o -name '*.service' -o -name '*.timer' \
-  -o -name '*.desktop' -o -name '*.jsonc' -o -name 'os-release' \) -exec sed -i 's/\r$//' {} +
+  -o -name '*.desktop' -o -name '*.jsonc' -o -name 'os-release' -o -name '*.path' -o -name '*.rules' \
+  -o -name '*.conf' -o -name 'baloofilerc' -o -name 'CHANGELOG.txt' \) -exec sed -i 's/\r$//' {} +
 
 # ---------------------------------------------------------------- PKGBUILD
 BASEV="$(tr -d ' \r\n' < VERSION)"
@@ -69,10 +87,12 @@ sed -i "s|@PKGVER@|$PKGVER|; s|@URL@|$URL|; s|@DEPENDS@|$DEPENDS|" "$WORK/PKGBUI
 cat > "$WORK/rustos-base.install" <<'EOF'
 post_install() {
   systemctl daemon-reload 2>/dev/null || true
+  systemctl enable power-profiles-daemon.service 2>/dev/null || true
   /usr/local/bin/rustos-branding || true
 }
 post_upgrade() {
   systemctl daemon-reload 2>/dev/null || true
+  systemctl enable power-profiles-daemon.service 2>/dev/null || true
   /usr/local/bin/rustos-branding || true
 }
 EOF

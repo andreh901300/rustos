@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=RustOS Gaming Setup
+Comment=Install Steam, graphics drivers and performance tools in a few clicks
+Exec=/usr/local/bin/rustos-gaming
+Icon=rustos
+Terminal=false
+Categories=Game;System;
