@@ -1,0 +1,363 @@
+#!/usr/bin/env bash
+# RustOS iPad mode: an iPad-style home screen for touchscreens, tablets and ARM/UTM on an iPad.
+# It works with a mouse and keyboard too, so you can try it on any PC without a touchscreen.
+#
+#   rustos-ipad-mode              open the window (turn iPad mode on or off)
+#   rustos-ipad-mode on           iPad look: floating dock, app grid, thin top bar, big touch targets, touch keyboard
+#   rustos-ipad-mode touch        keep your normal desktop, only add the touch keyboard and touch gestures
+#   rustos-ipad-mode off          back to exactly how it was before
+#   rustos-ipad-mode keyboard     show or hide the on-screen keyboard
+#   rustos-ipad-mode status       tell what is on
+#   rustos-ipad-mode pin-button   add an "iPad Mode" icon to the normal taskbar and the desktop (done once automatically)
+#   rustos-ipad-mode has-touch    exit 0 when a touchscreen is found
+# Add --quiet to on/touch/off to skip the windows.
+# Nothing is deleted: your panel layout and settings are saved in ~/.config/rustos-ipad and restored by "off".
+
+T="RustOS iPad mode"
+CFG="$HOME/.config"
+BK="$CFG/rustos-ipad"
+STATE="$BK/mode"
+FILES=(plasma-org.kde.plasma.desktop-appletsrc plasmashellrc kwinrc kdeglobals kwinrulesrc)
+WALL=/usr/share/rustos/wallpapers/ipad.svg
+NEEDED=(papirus-icon-theme maliit-keyboard maliit-framework qt6-virtualkeyboard iio-sensor-proxy qt6-tools)
+
+# ============================================================== part 2 (root): install the touch pieces
+if [ "${1:-}" = --install-deps ]; then
+  [ "$(id -u)" = 0 ] || exec sudo "$0" --install-deps
+  rm -f /run/rustos-ipad.status
+  echo "== Updating the package list"
+  pacman -Sy --noconfirm || { echo failed > /run/rustos-ipad.status; echo "Could not reach the package servers."; exit 1; }
+  ok=()
+  for p in "${NEEDED[@]}"; do
+    if pacman -Si "$p" >/dev/null 2>&1; then ok+=("$p"); else echo "  (skipping $p - not in the repositories)"; fi
+  done
+  if [ "${#ok[@]}" -gt 0 ]; then
+    echo "== Installing: ${ok[*]}"
+    pacman -Su --noconfirm --needed "${ok[@]}" || { echo failed > /run/rustos-ipad.status; echo "The install failed."; exit 1; }
+  fi
+  echo ok > /run/rustos-ipad.status
+  echo; echo "All done."
+  exit 0
+fi
+
+# ============================================================== helpers
+QUIET=0
+for a in "$@"; do [ "$a" = --quiet ] && QUIET=1; done
+
+say()  { [ "$QUIET" = 1 ] || kdialog --title "$T" --icon preferences-desktop-tablet --msgbox "$1"; }
+sorry(){
+  if [ "$QUIET" = 1 ]; then echo "$T: $1" >&2; else kdialog --title "$T" --icon preferences-desktop-tablet --sorry "$1"; fi
+}
+
+qd() {   # qd SERVICE PATH METHOD [ARGS]  (qdbus is called qdbus6 on Plasma 6)
+  local q
+  for q in qdbus6 qdbus-qt6 qdbus; do
+    if command -v "$q" >/dev/null 2>&1; then "$q" "$@"; return; fi
+  done
+  return 127
+}
+kw() { if command -v kwriteconfig6 >/dev/null 2>&1; then kwriteconfig6 "$@"; else kwriteconfig5 "$@"; fi; }
+kr() { if command -v kreadconfig6 >/dev/null 2>&1; then kreadconfig6 "$@"; else kreadconfig5 "$@"; fi; }
+
+has_touch() { udevadm info --export-db 2>/dev/null | grep -q 'ID_INPUT_TOUCHSCREEN=1'; }
+is_on()   { [ -e "$STATE" ]; }
+mode()    { cat "$STATE" 2>/dev/null; }
+
+kwin_reload()  { qd org.kde.KWin /KWin reconfigure >/dev/null 2>&1; }
+icons_notify() { dbus-send --session --type=signal /KGlobalSettings org.kde.KGlobalSettings.notifyChange int32:4 int32:0 >/dev/null 2>&1; }
+
+wait_shell() {   # wait until plasmashell answers on D-Bus
+  local i=0
+  while [ "$i" -lt 40 ]; do
+    i=$((i + 1))
+    qd org.kde.plasmashell /PlasmaShell >/dev/null 2>&1 && return 0
+    sleep 0.5
+  done
+  return 1
+}
+stop_shell() {
+  systemctl --user stop plasma-plasmashell.service >/dev/null 2>&1 || kquitapp6 plasmashell >/dev/null 2>&1
+  sleep 1
+  pkill -x plasmashell >/dev/null 2>&1
+  sleep 1
+}
+start_shell() {
+  systemctl --user start plasma-plasmashell.service >/dev/null 2>&1 || setsid -f plasmashell >/dev/null 2>&1
+  wait_shell
+}
+
+backup() {
+  [ -e "$BK/backed" ] && return 0
+  mkdir -p "$BK"
+  local f
+  for f in "${FILES[@]}"; do
+    rm -f "$BK/$f" "$BK/$f.missing"
+    if [ -e "$CFG/$f" ]; then cp -p "$CFG/$f" "$BK/$f"; else : > "$BK/$f.missing"; fi
+  done
+  touch "$BK/backed"
+}
+restore() {
+  [ -e "$BK/backed" ] || return 0
+  local f
+  for f in "${FILES[@]}"; do
+    if [ -e "$BK/$f.missing" ]; then rm -f "$CFG/$f"
+    elif [ -e "$BK/$f" ]; then cp -p "$BK/$f" "$CFG/$f"; fi
+  done
+}
+
+# the touch keyboard: Plasma lists its keyboards by a line inside their .desktop file
+osk_desktop() { grep -l 'X-KDE-Wayland-VirtualKeyboard=true' /usr/share/applications/*.desktop 2>/dev/null | head -n1; }
+
+osk_enable() {
+  local vk; vk=$(osk_desktop)
+  [ -n "$vk" ] || return 1
+  kw --file kwinrc --group Wayland --key InputMethod "$vk"
+  kw --file kwinrc --group Wayland --key VirtualKeyboardEnabled true
+}
+
+touch_edges() {
+  # swipe up from the bottom edge of the screen = overview (like the iPad app switcher);
+  # for mouse testing, the top-left corner does the same.
+  kw --file kwinrc --group Effect-overview --key TouchBorderActivate 4
+  kw --file kwinrc --group Effect-overview --key BorderActivate 7
+}
+
+add_shortcut() {   # Meta+Ctrl+T opens the iPad mode window from anywhere
+  kw --file kglobalshortcutsrc --group services --group rustos-ipad-mode.desktop --key _launch "Meta+Ctrl+T"
+}
+
+maximize_rule() {   # normal windows open maximized, like iPad apps
+  local n rules
+  n=$(kr --file kwinrulesrc --group General --key count); n=${n:-0}
+  rules=$(kr --file kwinrulesrc --group General --key rules)
+  case ",$rules," in *,rustos-ipad,*) return 0 ;; esac
+  kw --file kwinrulesrc --group General --key count "$((n + 1))"
+  kw --file kwinrulesrc --group General --key rules "${rules:+$rules,}rustos-ipad"
+  kw --file kwinrulesrc --group rustos-ipad --key Description "RustOS iPad mode: open windows maximized"
+  kw --file kwinrulesrc --group rustos-ipad --key types 1
+  kw --file kwinrulesrc --group rustos-ipad --key wmclassmatch 0
+  kw --file kwinrulesrc --group rustos-ipad --key maximizehoriz true
+  kw --file kwinrulesrc --group rustos-ipad --key maximizehorizrule 3
+  kw --file kwinrulesrc --group rustos-ipad --key maximizevert true
+  kw --file kwinrulesrc --group rustos-ipad --key maximizevertrule 3
+}
+
+# the launchers for the dock: only the apps that are really installed
+launcher_list() {
+  local d out=() f
+  for d in firefox org.kde.dolphin org.kde.konsole rustos-apps systemsettings org.kde.discover rustos-ipad-keyboard rustos-ipad-mode; do
+    for f in /usr/share/applications/"$d".desktop /usr/local/share/applications/"$d".desktop; do
+      [ -e "$f" ] && { out+=("\"applications:$d.desktop\""); break; }
+    done
+  done
+  local IFS=,; echo "${out[*]}"
+}
+
+build_layout() {
+  local launchers; launchers=$(launcher_list)
+  qd org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "
+function tryDo(f) { try { f(); } catch (e) {} }
+
+var old = panels();
+for (var i = old.length - 1; i >= 0; i--) { old[i].remove(); }
+
+// the floating dock at the bottom
+var dock = new Panel;
+dock.location = 'bottom';
+tryDo(function () { dock.hiding = 'none'; });
+tryDo(function () { dock.floating = true; });
+tryDo(function () { dock.alignment = 'center'; });
+tryDo(function () { dock.lengthMode = 'fit'; });
+tryDo(function () { dock.opacity = 'translucent'; });
+dock.height = Math.round(gridUnit * 4);
+tryDo(function () {
+  var grid = dock.addWidget('org.kde.plasma.kickerdash');
+  grid.currentConfigGroup = ['General'];
+  grid.writeConfig('icon', 'view-app-grid');
+  grid.reloadConfig();
+});
+tryDo(function () {
+  var tasks = dock.addWidget('org.kde.plasma.icontasks');
+  tasks.currentConfigGroup = ['General'];
+  tasks.writeConfig('launchers', [$launchers]);
+  tasks.writeConfig('showOnlyCurrentDesktop', false);
+  tasks.reloadConfig();
+});
+
+// the thin bar at the top: clock on the left, status icons on the right
+var top = new Panel;
+top.location = 'top';
+tryDo(function () { top.hiding = 'none'; });
+tryDo(function () { top.floating = false; });
+top.height = Math.round(gridUnit * 1.6);
+tryDo(function () { top.addWidget('org.kde.plasma.digitalclock'); });
+tryDo(function () { top.addWidget('org.kde.plasma.panelspacer'); });
+tryDo(function () { top.addWidget('org.kde.plasma.systemtray'); });
+" >/dev/null 2>&1
+}
+
+pin_script() {   # adds the iPad Mode icon to every taskbar that already exists
+  qd org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "
+var want = 'applications:rustos-ipad-mode.desktop';
+var ps = panels();
+for (var i = 0; i < ps.length; i++) {
+  var ws = ps[i].widgets();
+  for (var j = 0; j < ws.length; j++) {
+    var w = ws[j];
+    if (w.type != 'org.kde.plasma.icontasks' && w.type != 'org.kde.plasma.taskmanager') continue;
+    w.currentConfigGroup = ['General'];
+    var l = w.readConfig('launchers');
+    if (typeof l === 'string') l = l.split(',');
+    var out = [];
+    for (var k = 0; k < l.length; k++) { if (l[k] && l[k] !== want) out.push(l[k]); }
+    if (out.length === 0) continue;       // unknown layout: leave it alone
+    out.push(want);
+    w.writeConfig('launchers', out);
+    w.reloadConfig();
+  }
+}
+" >/dev/null 2>&1
+}
+
+need_deps() {   # are the touch pieces installed? offer to install them if not
+  local p miss=()
+  for p in papirus-icon-theme maliit-keyboard; do pacman -Qq "$p" >/dev/null 2>&1 || miss+=("$p"); done
+  [ "${#miss[@]}" -eq 0 ] && return 0
+  [ "$QUIET" = 1 ] && return 0
+  kdialog --title "$T" --icon preferences-desktop-tablet --yes-label "Install" --no-label "Skip" --yesno \
+    "iPad mode needs a few small extras (iPad-style icons and the touch keyboard).<br>Install them now? A terminal window asks for your password." || return 0
+  rm -f /run/rustos-ipad.status
+  konsole --nofork --title "$T" -e bash -c \
+    'sudo /usr/local/bin/rustos-ipad-mode --install-deps; echo; read -r -p "Press Enter to close this window. " _'
+  return 0
+}
+
+# ============================================================== commands
+cmd_on() {
+  local osk_ok
+  if is_on && [ "$(mode)" = ipad ]; then say "iPad mode is already on."; return 0; fi
+  [ -d /run/archiso ] && { sorry "Install RustOS first. iPad mode is for the installed system."; return 1; }
+  command -v kwriteconfig6 >/dev/null 2>&1 || command -v kwriteconfig5 >/dev/null 2>&1 || { sorry "The settings tool is missing. Run a RustOS update and try again."; return 1; }
+  need_deps
+  backup
+  echo ipad > "$STATE"
+  # icons and clicks
+  if [ -d /usr/share/icons/Papirus ]; then kw --file kdeglobals --group Icons --key Theme Papirus; fi
+  kw --file kdeglobals --group KDE --key SingleClick true
+  maximize_rule
+  touch_edges
+  osk_enable; osk_ok=$?
+  add_shortcut
+  kwin_reload
+  icons_notify
+  wait_shell || { sorry "The desktop is not ready. Log out and in, then try again."; QUIET=1; cmd_off; return 1; }
+  [ -r "$WALL" ] && plasma-apply-wallpaperimage "$WALL" >/dev/null 2>&1
+  build_layout
+  sleep 1
+  local msg="<b>iPad mode is on.</b><br><br>\
+Tap the grid icon in the dock for all your apps. Swipe up from the bottom edge (or move the mouse to the top-left corner) to see open windows.<br>\
+The <b>keyboard</b> icon in the dock shows the touch keyboard. It also shows up by itself when you tap a text box.<br>\
+To go back, tap the <b>iPad Mode</b> icon in the dock and choose <b>Turn off</b> (or press Meta+Ctrl+T)."
+  [ "$osk_ok" = 0 ] || msg="$msg<br><br><i>The touch keyboard is not installed yet. Run a RustOS update, then turn iPad mode on again.</i>"
+  [ "${XDG_SESSION_TYPE:-}" = wayland ] || msg="$msg<br><br><i>The touch keyboard needs the Wayland session. Choose \"Plasma (Wayland)\" on the login screen.</i>"
+  say "$msg"
+}
+
+cmd_touch() {
+  local osk_ok
+  if is_on; then say "iPad mode is already on."; return 0; fi
+  [ -d /run/archiso ] && { sorry "Install RustOS first."; return 1; }
+  need_deps
+  backup
+  echo touch > "$STATE"
+  touch_edges
+  osk_enable; osk_ok=$?
+  add_shortcut
+  kwin_reload
+  local msg="<b>Touch support is on.</b><br><br>Your desktop looks the same. The touch keyboard appears when you tap a text box, and you can swipe up from the bottom edge to see open windows."
+  [ "$osk_ok" = 0 ] || msg="$msg<br><br><i>The touch keyboard is not installed yet. Run a RustOS update, then try again.</i>"
+  say "$msg"
+}
+
+cmd_off() {
+  if ! is_on; then say "iPad mode is already off."; return 0; fi
+  local m; m=$(mode)
+  if [ "$m" = ipad ]; then stop_shell; fi
+  restore
+  rm -f "$STATE" "$BK/backed"
+  kwin_reload
+  icons_notify
+  [ "$m" = ipad ] && start_shell
+  say "<b>iPad mode is off.</b> Your desktop is back the way it was."
+}
+
+cmd_keyboard() {
+  local act
+  osk_enable || { sorry "The touch keyboard is not installed yet. Run a RustOS update and try again."; return 1; }
+  [ "${XDG_SESSION_TYPE:-}" = wayland ] || { sorry "The touch keyboard needs the Wayland session. Choose \"Plasma (Wayland)\" on the login screen."; return 1; }
+  kwin_reload
+  sleep 1
+  act=$(qd org.kde.KWin /VirtualKeyboard org.kde.kwin.VirtualKeyboard.active 2>/dev/null)
+  if [ "$act" = true ]; then
+    qd org.kde.KWin /VirtualKeyboard org.kde.kwin.VirtualKeyboard.active false >/dev/null 2>&1
+  else
+    qd org.kde.KWin /VirtualKeyboard org.kde.kwin.VirtualKeyboard.active true >/dev/null 2>&1 \
+      || sorry "Could not show the keyboard. Tap a text box, or open System Settings, Keyboard, Virtual Keyboard."
+  fi
+}
+
+cmd_status() {
+  if is_on; then echo "on ($(mode))"; else echo off; fi
+}
+
+cmd_pin() {
+  # an "iPad Mode" button on the desktop and in the normal taskbar (never in the iPad dock twice)
+  local d f
+  d=$(xdg-user-dir DESKTOP 2>/dev/null); d=${d:-$HOME/Desktop}
+  if [ -d "$d" ] || mkdir -p "$d" 2>/dev/null; then
+    f="$d/rustos-ipad-mode.desktop"
+    if [ ! -e "$f" ]; then
+      cp /usr/share/applications/rustos-ipad-mode.desktop "$f" 2>/dev/null && chmod +x "$f"
+    fi
+  fi
+  is_on && return 0
+  wait_shell && pin_script
+  return 0
+}
+
+cmd_menu() {
+  [ -d /run/archiso ] && { sorry "Install RustOS first. iPad mode is for the installed system."; return 1; }
+  local c
+  if is_on; then
+    c=$(kdialog --title "$T" --icon preferences-desktop-tablet --menu \
+      "iPad mode is on ($(mode))." \
+      off      "Turn iPad mode off (back to the normal desktop)" \
+      keyboard "Show or hide the touch keyboard" \
+      cancel   "Close this window") || return 0
+  else
+    c=$(kdialog --title "$T" --icon preferences-desktop-tablet --menu \
+      "Make RustOS touch friendly. Everything also works with a mouse and keyboard, so you can try it without a touchscreen. You can turn it off any time." \
+      on       "iPad mode: iPad-style home screen, dock and touch keyboard" \
+      touch    "Touch only: keep my desktop, add touch keyboard and swipe gestures" \
+      keyboard "Try the touch keyboard" \
+      cancel   "Close this window") || return 0
+  fi
+  case "$c" in
+    on)       cmd_on ;;
+    touch)    cmd_touch ;;
+    off)      cmd_off ;;
+    keyboard) cmd_keyboard ;;
+  esac
+}
+
+case "${1:-}" in
+  on)        cmd_on ;;
+  touch)     cmd_touch ;;
+  off)       cmd_off ;;
+  keyboard)  cmd_keyboard ;;
+  status)    cmd_status ;;
+  pin-button) cmd_pin ;;
+  has-touch) has_touch ;;
+  ""|--quiet) cmd_menu ;;
+  *) echo "Usage: rustos-ipad-mode [on|touch|off|keyboard|status|pin-button|has-touch] [--quiet]" >&2; exit 2 ;;
+esac

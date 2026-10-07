@@ -2,10 +2,29 @@ RustOS change list. Newest on top. Installed systems show this in "What's new" a
 Each "== RustOS x.y ==" line starts a version. publish.bat adds a line under the newest version for you.
 
 == RustOS 2.4 ==
-- 2.4 lets goo
+- 2.4
+
+== RustOS 2.7 ==
+- New iPad mode: an iPad-style home screen with a floating dock, app grid, thin top bar, iPad-style icons, windows that open full screen and a touch keyboard. Works with mouse and keyboard too, so you can try it on any PC without a touchscreen
+- Button to open it: "iPad Mode" in the menu, on the desktop, in the taskbar and in the Update Center, or press Meta+Ctrl+T. Turn it off the same way and your old desktop comes back exactly as it was
+- Touchscreen support for PCs and iPad: on-screen keyboard (also on the login screen), swipe up from the bottom edge to see open windows, "Touch only" option that keeps your normal desktop, auto-rotate support
+- RustOS Apps has a much bigger list (50+ apps in groups: office, internet and chat, music and video, pictures, programming, games, tools) and you can tick across groups before installing
+- Many more programs ready out of the box: man pages, htop/btop, 7-Zip and unrar, video and image thumbnails, more codecs, KDE extras (phone file access, calculator, disk usage), Papirus icons
+- The ARM edition now matches the PC edition: same packages (Bluetooth, power profiles, partition manager and so on), same language and keyboard questions at first start, same settings; it only leaves out what does not exist for ARM
+- Safer updates: a package name that does not exist can no longer break an update for everyone
+
+== RustOS 2.6 ==
+- New RustOS EXE Center (replaces Windows App Support): a folder (EXE-Center) for your Windows files with Setups, Runtimes (.NET, Visual C++, DirectX), DLLs and Programs; install a setup like cs1.6 setup.exe, install runtimes and DLLs, run programs and games, all from one window
+- Right-click an .exe: "Add to RustOS EXE Center". Double-click a .dll to install it
+- "Remove Windows support" button in the EXE Center (Wine is the engine behind .exe support, so it is only removed if you ask)
+- ARM edition is lighter: leaner package list, compressed-RAM swap, journal in RAM, weekly TRIM
+
+== RustOS 2.5 ==
+- RustOS for iPad and other ARM devices (experimental): an ARM disk image for UTM, built by GitHub; update channel for ARM added
+- On ARM, Windows .exe support and Steam are switched off with a clear message (they need an Intel or AMD PC)
 
 == RustOS 2.4 ==
-- Windows App Support (like Zorin OS): double-click an .exe, .msi or .lnk and RustOS runs it with Wine; a new Windows App Support window installs programs, lists them, adds fonts, Visual C++, DirectX and .NET, looks up compatibility and resets the Windows environment
+- Windows programs (.exe): double-click an .exe, .msi or .lnk and RustOS runs it with Wine (it offers to install Wine the first time)
 - Warns before running things that are known not to work well (anti-cheat games, Microsoft Office, Adobe)
 - Right-click an .exe, choose "Run as game" for GameMode and the MangoHud overlay
 - Undo an update: RustOS saves a restore point before every update and the Update Center can go back to it

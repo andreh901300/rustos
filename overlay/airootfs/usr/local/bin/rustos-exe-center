@@ -1,0 +1,354 @@
+#!/usr/bin/env bash
+# RustOS EXE Center: run Windows programs and games (.exe), with a place to put your files.
+# Windows programs run through Wine, the engine behind it. Start it from the app menu ("RustOS EXE Center") or run:
+#   rustos-exe-center                 the window
+#   rustos-exe-center --add files...  copy files into the EXE Center folder (sorted for you)
+#   rustos-exe-center --dll file.dll  install a DLL
+#
+# The EXE Center folder (~/EXE-Center) has:  Setups (installers, like "cs1.6 setup.exe")
+#   Runtimes (.NET, Visual C++, DirectX installers)   DLLs (extra .dll files)   Programs (portable programs and games)
+T="RustOS EXE Center"
+RUN=/usr/local/bin/rustos-run-exe
+ROOTDIR="${RUSTOS_EXE_HOME:-$HOME/EXE-Center}"
+SETUPS="$ROOTDIR/Setups"; RUNTIMES="$ROOTDIR/Runtimes"; DLLS="$ROOTDIR/DLLs"; PROGS="$ROOTDIR/Programs"
+PREFIX="${WINEPREFIX:-$HOME/.wine}"
+WINEMENU="${XDG_DATA_HOME:-$HOME/.local/share}/applications/wine"
+export WINEDEBUG=-all
+
+# ============================================================== (terminal window) add things with winetricks
+if [ "${1:-}" = --extras ]; then
+  shift
+  echo "== Installing: $*"
+  echo "(Windows downloads are fetched from the original sources. This can take several minutes.)"
+  if winetricks -q "$@"; then echo ok > /tmp/rustos-exe-center.status; else echo failed > /tmp/rustos-exe-center.status; fi
+  echo
+  read -r -p "Press Enter to close this window. " _
+  exit 0
+fi
+
+if [ -d /run/archiso ]; then
+  kdialog --title "$T" --icon rustos --msgbox "The EXE Center works on the installed RustOS.<br>Install it first, then open this again."
+  exit 0
+fi
+if [ "$(uname -m)" != x86_64 ]; then
+  kdialog --title "$T" --icon rustos --msgbox "Windows .exe programs need an Intel or AMD (x86) PC.<br>This is the ARM edition of RustOS, so they cannot run here."
+  exit 0
+fi
+
+esc() { sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'; }
+need_wine() { "$RUN" --ensure; command -v wine >/dev/null 2>&1; }
+
+make_folders() {
+  mkdir -p "$SETUPS" "$RUNTIMES" "$DLLS" "$PROGS"
+  [ -f "$ROOTDIR/README.txt" ] || cat > "$ROOTDIR/README.txt" <<'TXT'
+RustOS EXE Center folder
+========================
+Put your Windows files here, or use "Add files" in the RustOS EXE Center window.
+
+  Setups    installers, like "cs1.6 setup.exe" or "game-setup.msi"
+  Runtimes  .NET, Visual C++ and DirectX installers
+  DLLs      extra .dll files a program asks for
+  Programs  portable programs and games you just run (a whole game folder works too)
+
+Then open RustOS EXE Center and pick what to install or run.
+TXT
+}
+
+# which folder a file belongs in, from its name
+classify() {
+  local b=${1##*/}; b=${b,,}
+  case "$b" in
+    *.dll|*.ocx) echo DLLs ;;
+    *dotnet*|*ndp[0-9]*|*windowsdesktop-runtime*|*aspnetcore*|*netfx*|*vcredist*|*vc_redist*|*vcruntime*|*directx*|*dxsetup*|*xnafx*|*oalinst*) echo Runtimes ;;
+    *setup*|*install*|*.msi) echo Setups ;;
+    *) echo Programs ;;
+  esac
+}
+
+add_files() { # add_files <paths...>
+  make_folders
+  local f dest n=0 summary="" base
+  for f in "$@"; do
+    [ -f "$f" ] || continue
+    case "$(classify "$f")" in
+      DLLs) dest=$DLLS ;; Runtimes) dest=$RUNTIMES ;; Setups) dest=$SETUPS ;; *) dest=$PROGS ;;
+    esac
+    if cp --backup=numbered -- "$f" "$dest/"; then
+      n=$((n + 1)); base=$(printf '%s' "${f##*/}" | esc)
+      summary="$summary<br>&bull; $base &rarr; ${dest##*/}"
+    fi
+  done
+  if [ "$n" = 0 ]; then
+    kdialog --title "$T" --icon rustos --sorry "No files were added."
+  else
+    kdialog --title "$T" --icon rustos --msgbox "<b>Added $n file(s)</b> to your EXE Center folder:$summary<br><br>Open the EXE Center window to install or run them."
+  fi
+}
+
+# pick one file from a folder; sets PICKED. Returns 1 if cancelled or the folder is empty.
+PICKED=""
+pick_file() { # pick_file <title> <dir> <depth> <message when empty> <find tests...>
+  local title=$1 dir=$2 depth=$3 empty=$4; shift 4
+  local files=() menu=() f i=0 idx
+  while IFS= read -r -d '' f; do
+    files+=("$f"); menu+=("$i" "${f#"$dir"/}"); i=$((i + 1))
+  done < <(find "$dir" -maxdepth "$depth" -type f \( "$@" \) -print0 2>/dev/null | sort -z)
+  if [ "$i" = 0 ]; then
+    kdialog --title "$T" --icon rustos --msgbox "$empty"
+    return 1
+  fi
+  idx=$(kdialog --title "$T" --icon rustos --menu "$title" "${menu[@]}") || return 1
+  PICKED=${files[$idx]}
+}
+
+# ---- DLLs
+dll_bits() { # prints 32, 64 or 0 (unknown), from the file header
+  local f=$1 off mach
+  off=$(od -An -tu4 -j60 -N4 "$f" 2>/dev/null | tr -d ' ')
+  [ -n "$off" ] || { echo 0; return; }
+  mach=$(od -An -tx2 -j$((off + 4)) -N2 "$f" 2>/dev/null | tr -d ' ')
+  case "$mach" in 014c) echo 32 ;; 8664) echo 64 ;; *) echo 0 ;; esac
+}
+
+install_dll() { # install_dll <file.dll>
+  local f=$1 base lname bits dest where
+  [ -f "$f" ] || { kdialog --title "$T" --icon rustos --error "That file was not found."; return 1; }
+  base=${f##*/}; lname=${base,,}
+  case "${lname%.*}" in
+    kernel32|kernelbase|ntdll|user32|gdi32|advapi32|win32u|ucrtbase|msvcrt|shell32|ole32|combase|rpcrt4|ws2_32|wow64|wow64cpu|wow64win)
+      kdialog --title "$T" --icon rustos --warningcontinuecancel \
+        "<b>$(printf '%s' "$base" | esc) is a core Windows file.</b><br><br>Wine already has its own version, and replacing it usually breaks every Windows program.<br><br>Install it anyway?" || return 1 ;;
+  esac
+  need_wine || return 1
+  [ -d "$PREFIX/drive_c/windows" ] || { kdialog --title "$T" --icon rustos --sorry "The Windows environment is not ready yet. Try again in a minute."; return 1; }
+
+  where=$(kdialog --title "$T" --icon rustos --menu "Where should $(printf '%s' "$base" | esc) go?" \
+    win "For all Windows programs (recommended)" \
+    app "Next to one program (choose its folder)") || return 1
+  bits=$(dll_bits "$f")
+  if [ "$where" = app ]; then
+    dest=$(kdialog --title "$T" --icon rustos --getexistingdirectory "$HOME") || return 1
+    [ -n "$dest" ] || return 1
+    cp -f -- "$f" "$dest/" || { kdialog --title "$T" --icon rustos --error "Could not copy the file there."; return 1; }
+  else
+    if [ "$bits" = 32 ] && [ -d "$PREFIX/drive_c/windows/syswow64" ]; then dest="$PREFIX/drive_c/windows/syswow64"
+    else dest="$PREFIX/drive_c/windows/system32"; fi
+    cp -f -- "$f" "$dest/" || { kdialog --title "$T" --icon rustos --error "Could not copy the file into Windows."; return 1; }
+    # register it (only some DLLs need that; failures are fine)
+    if [ "${dest##*/}" = syswow64 ]; then
+      wine "C:\\windows\\syswow64\\regsvr32.exe" /s "$base" >/dev/null 2>&1 || true
+    else
+      wine regsvr32 /s "$base" >/dev/null 2>&1 || true
+    fi
+  fi
+  # let Wine prefer this file over its built-in one
+  wine reg add 'HKCU\Software\Wine\DllOverrides' /v "${base%.*}" /d native,builtin /f >/dev/null 2>&1 || true
+  kdialog --title "$T" --icon rustos --msgbox "<b>Done.</b> $(printf '%s' "$base" | esc) is installed${bits:+ ($bits-bit)}.<br>Close and start your program again."
+}
+
+pick_and_install_dll() {
+  make_folders
+  pick_file "Pick a DLL to install" "$DLLS" 2 "No DLL files yet.<br><br>Use <b>Add files</b>, or copy .dll files into:<br><tt>$DLLS</tt>" -iname '*.dll' -o -iname '*.ocx' || return 0
+  install_dll "$PICKED"
+}
+
+# ---- setups and runtimes
+install_setup() {
+  make_folders
+  pick_file "Pick a setup to run" "$SETUPS" 3 "No setup files yet.<br><br>Use <b>Add files</b> (for example <tt>cs1.6 setup.exe</tt>), or copy them into:<br><tt>$SETUPS</tt>" \
+    -iname '*.exe' -o -iname '*.msi' -o -iname '*.bat' || return 0
+  "$RUN" "$PICKED"
+  kdialog --title "$T" --icon rustos --msgbox "The setup has finished.<br><br>Look in <b>My Windows programs</b> (or the main menu) for what it installed. If it did not add an entry, its files are in the Windows C: drive."
+}
+
+install_runtimes() {
+  make_folders
+  local files=() menu=() f i=0 picked
+  while IFS= read -r -d '' f; do files+=("$f"); menu+=("$i" "${f#"$RUNTIMES"/}" off); i=$((i + 1)); done \
+    < <(find "$RUNTIMES" -maxdepth 2 -type f \( -iname '*.exe' -o -iname '*.msi' \) -print0 2>/dev/null | sort -z)
+  if [ "$i" = 0 ]; then
+    kdialog --title "$T" --icon rustos --msgbox "No runtime installers yet.<br><br>Put .NET, Visual C++ or DirectX installers (like <tt>dotnet-runtime-8.exe</tt> or <tt>vc_redist.x64.exe</tt>) in:<br><tt>$RUNTIMES</tt><br>or use <b>Add files</b>.<br><br>You can also let RustOS download common ones for you with <b>Download .NET, Visual C++, DirectX</b>."
+    return 0
+  fi
+  mapfile -t picked < <(kdialog --title "$T" --icon rustos --separate-output --checklist "Tick the runtimes to install (they run one after another)" "${menu[@]}") || return 0
+  [ "${#picked[@]}" -gt 0 ] || return 0
+  for idx in "${picked[@]}"; do
+    "$RUN" "${files[$idx]}"
+  done
+  kdialog --title "$T" --icon rustos --msgbox "Done. Try your program again."
+}
+
+run_program() { # run_program <0|1 as game>
+  make_folders
+  pick_file "Pick a program to run" "$PROGS" 4 "Nothing in your Programs folder yet.<br><br>Use <b>Add files</b> or <b>Add a folder</b>, or copy a portable program or game into:<br><tt>$PROGS</tt>" \
+    -iname '*.exe' -o -iname '*.bat' -o -iname '*.lnk' || return 0
+  if [ "$1" = 1 ]; then ( nohup "$RUN" --game "$PICKED" >/dev/null 2>&1 & ); else ( nohup "$RUN" "$PICKED" >/dev/null 2>&1 & ); fi
+}
+
+add_menu() {
+  local what
+  what=$(kdialog --title "$T" --icon rustos --menu "What do you want to add?" \
+    files  "Files: setups, .NET, DLLs, programs (sorted for you)" \
+    folder "A whole folder (a portable game or program)") || return 0
+  if [ "$what" = files ]; then
+    local picked=()
+    mapfile -t picked < <(kdialog --title "$T" --icon rustos --multiple --separate-output --getopenfilename "$HOME" \
+      "*.exe *.EXE *.msi *.MSI *.dll *.DLL *.ocx *.bat *.cab *.lnk|Windows files") || return 0
+    [ "${#picked[@]}" -gt 0 ] && add_files "${picked[@]}"
+  else
+    local d; d=$(kdialog --title "$T" --icon rustos --getexistingdirectory "$HOME") || return 0
+    [ -d "$d" ] || return 0
+    make_folders
+    kdialog --title "$T" --passivepopup "Copying the folder. This can take a while for big games." 6 2>/dev/null
+    if cp -a --backup=numbered -- "$d" "$PROGS/"; then
+      kdialog --title "$T" --icon rustos --msgbox "<b>Added</b> $(printf '%s' "${d##*/}" | esc) to your Programs folder.<br>Use <b>Run a program</b> to start it."
+    else
+      kdialog --title "$T" --icon rustos --sorry "The folder could not be copied (is there enough free space?)."
+    fi
+  fi
+}
+
+# ---- installed programs, extras, removal
+list_programs() {
+  local files=() menu=() f n i=0 pick ex
+  [ -d "$WINEMENU" ] && while IFS= read -r f; do
+    n=$(grep -m1 '^Name=' "$f" | cut -d= -f2-)
+    case "${n,,}" in ""|*uninstall*|*"wine"*) continue ;; esac
+    files+=("$f"); menu+=("$i" "$n"); i=$((i + 1))
+  done < <(find "$WINEMENU" -name '*.desktop' -type f 2>/dev/null | sort)
+  if [ "$i" = 0 ]; then
+    kdialog --title "$T" --icon rustos --msgbox "No installed Windows programs yet.<br><br>Run <b>Install a setup</b>. Programs you install also show up in the main menu."
+    return 0
+  fi
+  pick=$(kdialog --title "$T" --icon rustos --menu "Your Windows programs" "${menu[@]}") || return 0
+  ex=$(grep -m1 '^Exec=' "${files[$pick]}" | cut -d= -f2-)
+  [ -n "$ex" ] && ( cd "$HOME" && nohup bash -c "$ex" >/dev/null 2>&1 & )
+}
+
+extras() {
+  need_wine || return 0
+  command -v winetricks >/dev/null 2>&1 || { kdialog --title "$T" --icon rustos --sorry "winetricks is missing. Open the EXE Center again after the Windows support install finishes."; return 0; }
+  local picked
+  mapfile -t picked < <(kdialog --title "$T" --icon rustos --separate-output --checklist \
+    "Download and add what a program asks for."$'\n'"Most programs need none of these." \
+    fonts "Windows fonts (Arial, Times New Roman...)" off \
+    vc    "Visual C++ libraries (many programs and games need them)" on \
+    dx    "DirectX libraries for older games" off \
+    dxvk  "DXVK: faster DirectX 9 to 11 games (uses Vulkan)" off \
+    net   ".NET Framework 4.8 (slow, may fail; Wine Mono already runs many .NET programs)" off) || return 0
+  [ "${#picked[@]}" -gt 0 ] || return 0
+  local verbs=() p
+  for p in "${picked[@]}"; do
+    case "$p" in
+      fonts) verbs+=(corefonts) ;;
+      vc)    verbs+=(vcrun2022) ;;
+      dx)    verbs+=(d3dx9 d3dx11_43 d3dcompiler_47) ;;
+      dxvk)  verbs+=(dxvk) ;;
+      net)   verbs+=(dotnet48) ;;
+    esac
+  done
+  rm -f /tmp/rustos-exe-center.status
+  konsole --nofork --title "$T" -e /usr/local/bin/rustos-exe-center --extras "${verbs[@]}"
+  if [ "$(cat /tmp/rustos-exe-center.status 2>/dev/null)" = ok ]; then
+    kdialog --title "$T" --icon rustos --msgbox "Done. Try your program again."
+  else
+    kdialog --title "$T" --icon rustos --sorry "Something did not install. Scroll the terminal window for the first error. Some Windows downloads are unreliable; try again later."
+  fi
+}
+
+compat() {
+  local q enc
+  q=$(kdialog --title "$T" --icon rustos --inputbox "Name of the program or game:" "") || return 0
+  [ -n "$q" ] || return 0
+  enc=$(printf '%s' "$q" | od -An -tx1 | tr -d '\n' | sed 's/ /%/g')
+  xdg-open "https://appdb.winehq.org/objectManager.php?sClass=application&sTitle=$enc" >/dev/null 2>&1 &
+  kdialog --title "$T" --icon rustos --msgbox "The WineHQ database was opened in your browser.<br>Look for a <b>Platinum</b>, <b>Gold</b> or <b>Silver</b> rating.<br><br>For Steam games also check <b>protondb.com</b>."
+}
+
+reset_env() {
+  [ -d "$PREFIX" ] || { kdialog --title "$T" --icon rustos --msgbox "There is nothing to reset yet."; return 0; }
+  kdialog --title "$T" --icon rustos --warningyesno \
+    "<b>Reset the Windows environment?</b><br><br>Windows programs you installed here will be removed from the menu and need to be installed again. Installed DLLs go too.<br><br>Your old Windows folder is kept as <tt>.wine.old-DATE</tt> in your home folder, so saved games and documents are not lost. Your EXE Center folder is not touched." || return 0
+  pkill -u "$USER" -x wineserver 2>/dev/null || true
+  mv "$PREFIX" "$HOME/.wine.old-$(date +%F-%H%M)"
+  rm -rf "$WINEMENU"
+  command -v kbuildsycoca6 >/dev/null 2>&1 && kbuildsycoca6 >/dev/null 2>&1
+  kdialog --title "$T" --icon rustos --msgbox "Done. A fresh Windows environment is made the next time you open a Windows program."
+}
+
+remove_wine() {
+  local pk
+  pk=$(pacman -Qq wine wine-mono wine-gecko winetricks 2>/dev/null | tr '\n' ' ')
+  if [ -z "$pk" ]; then
+    kdialog --title "$T" --icon rustos --msgbox "Windows support (Wine) is not installed, so there is nothing to remove."
+    return 0
+  fi
+  kdialog --title "$T" --icon rustos --warningyesno \
+    "<b>Remove Windows support?</b><br><br>This uninstalls <b>Wine</b> (about 1 GB). Windows .exe files will stop working until you install it again (just double-click an .exe and RustOS offers to).<br><br>Your EXE Center folder and files are not touched." || return 0
+  # shellcheck disable=SC2016
+  konsole --nofork --title "$T" -e bash -c 'sudo pacman -Rns $1; echo; read -r -p "Press Enter to close this window. " _' _ "$pk"
+  if command -v wine >/dev/null 2>&1; then
+    kdialog --title "$T" --icon rustos --sorry "Wine is still installed. Scroll the terminal window for the reason."
+    return 0
+  fi
+  if [ -d "$PREFIX" ] && kdialog --title "$T" --icon rustos --yes-label "Delete them" --no-label "Keep them" --yesno \
+      "Wine is gone.<br><br>Delete the Windows programs and data you installed with it (the hidden <tt>.wine</tt> folder)?"; then
+    rm -rf "$PREFIX" "$WINEMENU"
+    command -v kbuildsycoca6 >/dev/null 2>&1 && kbuildsycoca6 >/dev/null 2>&1
+  fi
+  kdialog --title "$T" --icon rustos --msgbox "Windows support was removed."
+}
+
+# ============================================================== quick modes
+case "${1:-}" in
+  --add) shift; [ "$#" -gt 0 ] && add_files "$@"; exit 0 ;;
+  --dll) shift; [ -n "${1:-}" ] && install_dll "$1"; exit 0 ;;
+esac
+
+make_folders
+while true; do
+  ver=$(wine --version 2>/dev/null || echo "not installed yet (it installs the first time you need it)")
+  choice=$(kdialog --title "$T" --icon rustos --menu \
+    "Run Windows programs and games on RustOS."$'\n'"Your files go in: $ROOTDIR"$'\n'"Engine: Wine ($ver)" \
+    add      "Add files: setups, .NET, DLLs, programs" \
+    setup    "Install a setup (like cs1.6 setup.exe)" \
+    runtime  "Install .NET / Visual C++ / DirectX from my files" \
+    dll      "Install a DLL" \
+    runp     "Run a program from my Programs folder" \
+    rung     "Run a program as a game (GameMode + FPS overlay)" \
+    anyfile  "Run any .exe from anywhere" \
+    mine     "My installed Windows programs" \
+    folder   "Open my EXE Center folder" \
+    extras   "Download .NET, Visual C++, DirectX, fonts for me" \
+    drive    "Open the Windows C: drive" \
+    remove   "Uninstall a Windows program" \
+    config   "Windows settings (version, graphics, audio)" \
+    compat   "Will my program work? (look it up)" \
+    reset    "Reset the Windows environment" \
+    delwine  "Remove Windows support (delete Wine)" \
+    about    "What works and what does not") || exit 0
+  case "$choice" in
+    add)     add_menu ;;
+    setup)   install_setup ;;
+    runtime) install_runtimes ;;
+    dll)     pick_and_install_dll ;;
+    runp)    run_program 0 ;;
+    rung)    run_program 1 ;;
+    anyfile) "$RUN" ;;
+    mine)    need_wine && list_programs ;;
+    folder)  xdg-open "$ROOTDIR" >/dev/null 2>&1 & ;;
+    extras)  extras ;;
+    drive)   need_wine && { [ -d "$PREFIX/drive_c" ] || "$RUN" --ensure; xdg-open "$PREFIX/drive_c" >/dev/null 2>&1 & } ;;
+    remove)  need_wine && { wine uninstaller >/dev/null 2>&1 & } ;;
+    config)  need_wine && { winecfg >/dev/null 2>&1 & } ;;
+    compat)  compat ;;
+    reset)   reset_env ;;
+    delwine) remove_wine ;;
+    about)
+      kdialog --title "$T" --icon rustos --msgbox \
+"<b>How it works</b><br>Linux cannot run Windows programs by itself. RustOS runs them with <b>Wine</b>, and Steam games with <b>Proton</b>. The EXE Center is the friendly front door: one place for your setups, .NET and Visual C++ installers, DLLs and programs.<br><br>\
+<b>Usually works</b><br>&bull; Many everyday programs, older programs and installers<br>&bull; Many older games (for example Counter-Strike 1.6) and a lot of Steam games (check protondb.com)<br><br>\
+<b>Often does not work</b><br>&bull; Games with kernel anti-cheat (Valorant, many online shooters)<br>&bull; Microsoft Office and Adobe programs<br>&bull; Programs that need special Windows drivers<br>&bull; Some copy-protection systems<br><br>\
+Nothing here can promise a program will work. Try it: nothing is harmed if it fails." ;;
+  esac
+done

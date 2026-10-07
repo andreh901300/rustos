@@ -67,6 +67,12 @@ Use `bash publish.sh` in the project folder instead of `publish.bat`. It connect
 signs you in through the browser the first time. If you have no project folder on RustOS yet:
 `git clone https://github.com/andreh901300/rustos ~/rustos-arch` and copy your changed files into it.
 
+## The ARM image (iPad / UTM)
+
+Needs the normal publish to be green first. Then **Actions -> Build RustOS ARM image -> Run workflow**. See README.md
+("iPad and other ARM devices"). The first time you publish `.github/workflows/build-arm-image.yml`, GitHub wants your
+sign-in to have the `workflow` permission; `publish.sh` asks for it by itself (a browser window opens).
+
 ## Every new version
 
 1. Change whatever you want in the project (branding, scripts, `packages-extra.txt`, ...).

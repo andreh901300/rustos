@@ -93,6 +93,11 @@ if [ -d /run/archiso ]; then
   exit 0
 fi
 
+if [ "$(uname -m)" != x86_64 ]; then
+  kdialog --title "$T" --icon rustos --msgbox "Gaming setup (Steam, Proton) needs an Intel or AMD (x86) PC.<br>This is the ARM edition of RustOS, so it is not available here."
+  exit 0
+fi
+
 virt=$(systemd-detect-virt 2>/dev/null || true)
 if [ -n "$virt" ] && [ "$virt" != none ]; then
   kdialog --title "$T" --icon rustos --warningcontinuecancel \

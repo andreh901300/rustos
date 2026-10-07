@@ -97,18 +97,31 @@ fi
 git commit -q -m "$COMMITMSG" || die "The commit failed."
 git pull -q --no-rebase --no-edit -X ours origin main >/dev/null 2>&1
 
-push() { GIT_TERMINAL_PROMPT=0 git push -q origin main; }
+PUSHERR=$(mktemp)
+push() { GIT_TERMINAL_PROMPT=0 git push -q origin main 2>"$PUSHERR"; }
+need_gh() {
+  command -v gh >/dev/null 2>&1 && return 0
+  echo "Installing the GitHub sign-in tool (needs your password)..."
+  sudo pacman -S --needed --noconfirm github-cli || die "Could not install github-cli. Run:  sudo pacman -S github-cli"
+}
 if ! push; then
-  echo
-  echo "GitHub needs you to sign in (one time). A browser window will open."
-  if ! command -v gh >/dev/null 2>&1; then
-    echo "Installing the GitHub sign-in tool (needs your password)..."
-    sudo pacman -S --needed --noconfirm github-cli || die "Could not install github-cli. Run:  sudo pacman -S github-cli"
+  if grep -qi 'workflow' "$PUSHERR"; then
+    # GitHub only lets a sign-in with the "workflow" permission change files in .github/workflows
+    echo
+    echo "GitHub needs one more permission (workflow) to publish this. A browser window will open."
+    need_gh
+    gh auth refresh -h github.com -s workflow || die "That did not finish. Run publish.sh again to retry."
+    gh auth setup-git
+  else
+    echo
+    echo "GitHub needs you to sign in (one time). A browser window will open."
+    need_gh
+    gh auth login -h github.com -p https -w -s workflow || die "Sign-in did not finish. Run publish.sh again to retry."
+    gh auth setup-git
   fi
-  gh auth login -h github.com -p https -w || die "Sign-in did not finish. Run publish.sh again to retry."
-  gh auth setup-git
-  push || die "Push failed. Check your internet / GitHub login and try again."
+  push || { cat "$PUSHERR"; die "Push failed. Check your internet / GitHub login and try again."; }
 fi
+rm -f "$PUSHERR"
 echo
 echo "Pushed! GitHub is now building the update (about 2-3 minutes)."
 echo "Watch it on your repository's \"Actions\" tab."

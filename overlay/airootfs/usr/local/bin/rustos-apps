@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
 # RustOS Apps: pick the extra programs you want. RustOS stays light because none of these are installed by default.
 # Start it from the app menu ("RustOS Apps") or run:  rustos-apps
+# The list of apps lives in /usr/share/rustos/apps.catalog (one app per line).
 # Part 1 (you, in a window): asks what you want.  Part 2 (root, in a terminal window): installs it.
+
+CATALOG=${RUSTOS_APPS_CATALOG:-/usr/share/rustos/apps.catalog}
+ARCH=$(uname -m)
+
+# catalog_field ID N  ->  field N (1 = category ... 7 = flags) of the app with this id
+catalog_field() {
+  awk -F'|' -v id="$1" -v n="$2" '$0 !~ /^#/ && $2 == id { print $n; exit }' "$CATALOG"
+}
 
 # ============================================================== part 2 (root)
 if [ "${1:-}" = --install ]; then
   shift
   [ "$(id -u)" = 0 ] || exec sudo "$0" --install "$@"
   rm -f /run/rustos-apps.status
-  want=" $* "
-  has() { case "$want" in *" $1 "*) return 0 ;; esac; return 1; }
   fail() { echo; echo "Something went wrong: $1"; echo failed > /run/rustos-apps.status; exit 1; }
 
   echo "== Updating the package list"
   pacman -Sy --noconfirm || fail "could not reach the package servers. Are you online?"
 
-  pkgs=()
-  svcs=()
   lang=${LANG%%.*}                       # de_DE
   case "$lang" in
     en_US|C|POSIX|"") lo="" ;;
@@ -25,39 +30,42 @@ if [ "${1:-}" = --install ]; then
     en_GB) lo=en-gb ;;
     *)     lo=${lang%%_*} ;;
   esac
-  if has office; then
-    pkgs+=(libreoffice-fresh)
-    [ -n "$lo" ] && pkgs+=("libreoffice-fresh-$lo")
-  fi
-  has media && pkgs+=(vlc vlc-plugins-all)
-  if has print; then
-    pkgs+=(cups cups-filters cups-pdf print-manager hplip sane sane-airscan simple-scan avahi)
-    svcs+=(cups.socket cups-browsed.service avahi-daemon.service)
-  fi
-  has gimp && pkgs+=(gimp)
-  has mail && pkgs+=(thunderbird)
-  has obs  && pkgs+=(obs-studio)
+
+  pkgs=(); fps=(); svcs=(); wine=0
+  for id in "$@"; do
+    [ -n "$(catalog_field "$id" 2)" ] || { echo "  (unknown app: $id)"; continue; }
+    p=$(catalog_field "$id" 4); f=$(catalog_field "$id" 5); s=$(catalog_field "$id" 6)
+    # shellcheck disable=SC2206
+    { [ "$p" != - ] && pkgs+=($p); [ "$f" != - ] && fps+=($f); [ "$s" != - ] && svcs+=($s); }
+    [ "$id" = office ] && [ -n "$lo" ] && pkgs+=("libreoffice-fresh-$lo")
+    [ "$id" = windows ] && wine=1
+    [ "$id" = docker ] && echo "  (Docker: add yourself to the docker group later with:  sudo usermod -aG docker \$USER )"
+  done
 
   if [ "${#pkgs[@]}" -gt 0 ]; then
     ok=()
     for p in "${pkgs[@]}"; do
       if pacman -Si "$p" >/dev/null 2>&1; then ok+=("$p"); else echo "  (skipping $p - not in the repositories)"; fi
     done
-    echo "== Installing: ${ok[*]}"
-    pacman -Su --noconfirm --needed "${ok[@]}" || fail "the package install failed (see the lines above)."
+    if [ "${#ok[@]}" -gt 0 ]; then
+      echo "== Installing: ${ok[*]}"
+      pacman -Su --noconfirm --needed "${ok[@]}" || fail "the package install failed (see the lines above)."
+    fi
     for s in "${svcs[@]}"; do systemctl enable "$s" >/dev/null 2>&1 || true; done
   fi
 
-  if has windows; then
+  if [ "$wine" = 1 ]; then
     echo "== Windows program support (Wine)"
     /usr/local/bin/rustos-gaming --install wine || fail "Windows program support could not be installed."
   fi
 
-  if has bottles; then
-    echo "== Bottles (Flatpak)"
+  if [ "${#fps[@]}" -gt 0 ]; then
+    echo "== Flatpak apps: ${fps[*]}"
     if ! command -v flatpak >/dev/null 2>&1; then pacman -S --noconfirm --needed flatpak || fail "flatpak is missing."; fi
     flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
-    flatpak install -y --noninteractive flathub com.usebottles.bottles || echo "  (could not install Bottles - try again later from Discover)"
+    for a in "${fps[@]}"; do
+      flatpak install -y --noninteractive flathub "$a" || echo "  (could not install $a - try again later from Discover)"
+    done
   fi
 
   echo ok > /run/rustos-apps.status
@@ -72,40 +80,87 @@ if [ -d /run/archiso ]; then
   kdialog --title "$T" --icon rustos --msgbox "Apps can be added after RustOS is installed.<br>Install it first, then open this again."
   exit 0
 fi
+[ -r "$CATALOG" ] || { kdialog --title "$T" --icon rustos --sorry "The app list is missing ($CATALOG). Run a RustOS update and try again."; exit 1; }
 
-mapfile -t picked < <(kdialog --title "$T" --icon rustos --separate-output --checklist \
-  "Pick what you want. RustOS stays light because none of this is installed by default."$'\n'"You need an internet connection." \
-  office  "Office: LibreOffice (documents, spreadsheets, slides)" on \
-  media   "Video and music player: VLC" on \
-  windows "Windows programs: run .exe files with a double-click (Wine)" on \
-  print   "Printing and scanning" off \
-  gimp    "Image editor: GIMP" off \
-  mail    "Email: Thunderbird" off \
-  obs     "Screen recording and streaming: OBS Studio" off \
-  bottles "Bottles: manage Windows programs in a window (Flatpak)" off \
-  edu     "Education Center: PDF tools, Canva and study apps" off \
-  games   "Gaming setup: Steam, graphics driver, performance tools" off) || exit 0
-[ "${#picked[@]}" -gt 0 ] || exit 0
+# Which apps does this computer offer? (x86-only ones are hidden on ARM.)
+offered() {   # offered ID
+  local fl; fl=$(catalog_field "$1" 7)
+  case ",$fl," in *,x86,*) case "$ARCH" in x86_64) return 0 ;; *) return 1 ;; esac ;; esac
+  return 0
+}
 
-games=0; edu=0; items=()
-for i in "${picked[@]}"; do
-  case "$i" in
+mapfile -t cats < <(awk -F'|' '$0 !~ /^#/ && NF >= 7 && !seen[$1]++ { print $1 }' "$CATALOG")
+
+declare -A sel=()                         # id -> 1 when ticked
+while IFS='|' read -r c id _ _ _ _ fl; do
+  case "$c" in "#"*|"") continue ;; esac
+  offered "$id" || continue
+  case ",$fl," in *,on,*) sel[$id]=1 ;; esac
+done < "$CATALOG"
+
+count_in() {   # count_in CATEGORY
+  local n=0 id c
+  while IFS='|' read -r c id _; do
+    [ "$c" = "$1" ] && [ -n "${sel[$id]:-}" ] && n=$((n + 1))
+  done < <(grep -v '^#' "$CATALOG")
+  echo "$n"
+}
+total() { local n=0 k; for k in "${!sel[@]}"; do [ -n "${sel[$k]}" ] && n=$((n + 1)); done; echo "$n"; }
+
+pick_category() {   # pick_category CATEGORY
+  local args=() c id label fl st out
+  while IFS='|' read -r c id label _ _ _ fl; do
+    [ "$c" = "$1" ] || continue
+    offered "$id" || continue
+    st=off; [ -n "${sel[$id]:-}" ] && st=on
+    args+=("$id" "$label" "$st")
+  done < <(grep -v '^#' "$CATALOG")
+  [ "${#args[@]}" -gt 0 ] || return 0
+  out=$(kdialog --title "$T" --icon rustos --separate-output --checklist \
+    "$1"$'\n'"Tick what you want, then press OK." "${args[@]}") || return 0
+  # reset this category's ticks, then set the new ones
+  local i
+  for ((i = 0; i < ${#args[@]}; i += 3)); do unset "sel[${args[i]}]"; done
+  for id in $out; do sel[$id]=1; done
+}
+
+while :; do
+  menu=()
+  for c in "${cats[@]}"; do
+    # skip categories with nothing offered on this computer
+    n=$(count_in "$c")
+    menu+=("$c" "$c   ($n ticked)")
+  done
+  menu+=("__go" "Install the $(total) ticked apps  >>")
+  choice=$(kdialog --title "$T" --icon rustos --menu \
+    "Pick a group, tick what you want, come back, and press Install at the bottom."$'\n'"RustOS stays light because none of this is installed by default. You need an internet connection." \
+    "${menu[@]}") || exit 0
+  [ "$choice" = __go ] && break
+  pick_category "$choice"
+done
+
+items=(); games=0; edu=0
+for id in "${!sel[@]}"; do
+  [ -n "${sel[$id]}" ] || continue
+  case "$id" in
     games) games=1 ;;
     edu)   edu=1 ;;
-    *)     items+=("$i") ;;
+    *)     items+=("$id") ;;
   esac
 done
+[ "${#items[@]}" -gt 0 ] || [ "$games" = 1 ] || [ "$edu" = 1 ] || { kdialog --title "$T" --icon rustos --msgbox "Nothing ticked."; exit 0; }
 
 if [ "${#items[@]}" -gt 0 ]; then
   kdialog --title "$T" --icon rustos --yes-label "Install" --no-label "Cancel" --yesno \
-    "Ready to install.<br>A terminal window shows the progress and asks for your password. It can take a while for big apps like LibreOffice." || exit 0
+    "Ready to install ${#items[@]} app group(s).<br>A terminal window shows the progress and asks for your password. It can take a while for big apps like LibreOffice or Blender." || exit 0
   rm -f /run/rustos-apps.status
   konsole --nofork --title "RustOS Apps" -e bash -c \
     'sudo /usr/local/bin/rustos-apps --install "$@"; echo; read -r -p "Press Enter to close this window. " _' _ "${items[@]}"
   if [ "$(cat /run/rustos-apps.status 2>/dev/null)" = ok ]; then
     msg="<b>Done!</b> Find your new apps in the menu."
-    case " ${items[*]} " in *" windows "*) msg="$msg<br><br>To run a Windows program, double-click its .exe file. Right-click it and choose <b>Run as game</b> for games.<br>Open <b>Windows App Support</b> in the menu to install and manage Windows programs." ;; esac
+    case " ${items[*]} " in *" windows "*) msg="$msg<br><br>To run a Windows program, double-click its .exe file. Right-click it and choose <b>Run as game</b> for games.<br>Open <b>RustOS EXE Center</b> in the menu to install and manage Windows programs." ;; esac
     case " ${items[*]} " in *" print "*) msg="$msg<br><br>Add your printer in System Settings, Printers." ;; esac
+    case " ${items[*]} " in *" docker "*) msg="$msg<br><br>Docker: run <tt>sudo usermod -aG docker \$USER</tt> and log in again to use it without sudo." ;; esac
     kdialog --title "$T" --icon rustos --msgbox "$msg"
   else
     kdialog --title "$T" --icon rustos --sorry "Not everything was installed. Scroll the terminal window for the first error, or run RustOS Apps again."

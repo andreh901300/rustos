@@ -10,6 +10,29 @@ fi
 
 # the live disk is only for trying and installing
 [ -d /run/archiso ] && exit 0
+# iPad mode: put an "iPad Mode" button on the desktop and taskbar once, then (once) offer it on touchscreens.
+# The ARM/iPad edition asks during its first start and leaves ~/.config/rustos-ipad-mode-wanted, which turns it on here.
+IMARK="$HOME/.config/rustos-ipad-offered"
+if [ -x /usr/local/bin/rustos-ipad-mode ] && [ ! -e "$IMARK" ]; then
+  mkdir -p "$HOME/.config" && touch "$IMARK"
+  /usr/local/bin/rustos-ipad-mode pin-button
+  sleep 3
+  if [ -e "$HOME/.config/rustos-ipad-mode-wanted" ]; then
+    rm -f "$HOME/.config/rustos-ipad-mode-wanted"
+    /usr/local/bin/rustos-ipad-mode on --quiet
+  elif /usr/local/bin/rustos-ipad-mode has-touch; then
+    c=$(kdialog --title "RustOS" --icon preferences-desktop-tablet --menu \
+      "A touchscreen was found. Want a touch-friendly desktop?"$'\n'"You can change this any time: search for iPad Mode in the menu." \
+      ipad  "iPad mode: iPad-style home screen, dock and touch keyboard" \
+      touch "Touch only: keep my desktop, add touch keyboard and swipe gestures" \
+      no    "No thanks") || c=no
+    case "$c" in
+      ipad)  /usr/local/bin/rustos-ipad-mode on ;;
+      touch) /usr/local/bin/rustos-ipad-mode touch ;;
+    esac
+  fi
+fi
+
 GMARK="$HOME/.config/rustos-setup-asked"
 [ -e "$GMARK" ] && exit 0
 [ -x /usr/local/bin/rustos-apps ] || exit 0

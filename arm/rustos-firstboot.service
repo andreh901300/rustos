@@ -1,0 +1,20 @@
+[Unit]
+Description=RustOS first boot setup
+ConditionPathExists=!/var/lib/rustos/firstboot-done
+After=systemd-user-sessions.service local-fs.target
+Before=sddm.service display-manager.service getty@tty1.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/rustos-firstboot
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+
+[Install]
+WantedBy=multi-user.target

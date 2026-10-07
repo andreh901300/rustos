@@ -1,10 +1,15 @@
 [Desktop Entry]
 Type=Service
-MimeType=application/x-ms-dos-executable;application/vnd.microsoft.portable-executable;application/x-msdownload;application/x-ms-shortcut;
-Actions=rungame;
+MimeType=application/x-ms-dos-executable;application/vnd.microsoft.portable-executable;application/x-msdownload;application/x-msi;application/x-ms-installer;application/x-ms-shortcut;
+Actions=rungame;addexe;
 X-KDE-Priority=TopLevel
 
 [Desktop Action rungame]
 Name=Run as game (GameMode and MangoHud)
 Icon=applications-games
 Exec=/usr/local/bin/rustos-run-exe --game %f
+
+[Desktop Action addexe]
+Name=Add to RustOS EXE Center
+Icon=application-x-ms-dos-executable
+Exec=/usr/local/bin/rustos-exe-center --add %F

@@ -80,3 +80,48 @@ less
 
 # --- Hyper-V guest tools (clipboard/time/shutdown from Hyper-V Manager) ---
 hyperv
+
+# --- command-line basics ---
+man-db
+man-pages
+bash-completion
+wget
+rsync
+htop
+btop
+lsof
+usbutils
+tree
+zip
+p7zip
+unrar
+
+# --- previews, thumbnails, codecs ---
+gst-plugins-good
+gst-libav
+ffmpegthumbs
+kdegraphics-thumbnailers
+kimageformats
+qt6-imageformats
+
+# --- fonts and spelling ---
+ttf-dejavu
+hunspell-en_us
+
+# --- KDE extras ---
+kio-extras
+kio-admin
+kde-cli-tools
+kdeplasma-addons
+xdg-desktop-portal-gtk
+gvfs-mtp
+kcalc
+filelight
+
+# --- touchscreen, on-screen keyboard, iPad mode ---
+maliit-keyboard
+maliit-framework
+qt6-virtualkeyboard
+iio-sensor-proxy
+qt6-tools
+papirus-icon-theme

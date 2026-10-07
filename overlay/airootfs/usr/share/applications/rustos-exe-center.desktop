@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=RustOS EXE Center
+Comment=Run Windows programs and games. Put setups, .NET, DLLs and programs in one place.
+Exec=/usr/local/bin/rustos-exe-center
+Icon=application-x-ms-dos-executable
+Terminal=false
+Categories=System;Utility;

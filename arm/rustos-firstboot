@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# First boot of the RustOS ARM image (iPad / UTM): sets up the package keys, grows the disk,
+# asks for a user name and password, then lets the desktop start. Runs once, on the console.
+DONE=/var/lib/rustos/firstboot-done
+[ -e "$DONE" ] && exit 0
+export TERM="${TERM:-linux}"
+mkdir -p /var/lib/rustos
+clear
+echo "=============================================="
+echo "  Welcome to RustOS (ARM edition)"
+echo "  A few quick questions, then the desktop starts."
+echo "=============================================="
+echo
+
+# --- package keys (made fresh on this machine, so every copy of the image has its own)
+echo "Preparing the package keys (this takes a moment)..."
+rm -rf /etc/pacman.d/gnupg
+pacman-key --init >/dev/null 2>&1
+pacman-key --populate archlinuxarm >/dev/null 2>&1
+if [ -r /usr/share/rustos/repo.conf ] && [ -r /usr/share/rustos/rustos-pub.gpg ]; then
+  # shellcheck disable=SC1091
+  . /usr/share/rustos/repo.conf
+  pacman-key --add /usr/share/rustos/rustos-pub.gpg >/dev/null 2>&1
+  pacman-key --lsign-key "$REPO_FPR" >/dev/null 2>&1
+fi
+
+# --- use the whole virtual disk (you can make the disk bigger in UTM before the first start)
+root=$(findmnt -n -o SOURCE /)
+if [ -b "$root" ] && command -v growpart >/dev/null 2>&1; then
+  disk="/dev/$(lsblk -no pkname "$root" | head -n 1)"
+  part=$(cat "/sys/class/block/$(basename "$root")/partition" 2>/dev/null)
+  if [ -n "$part" ]; then growpart "$disk" "$part" >/dev/null 2>&1; resize2fs "$root" >/dev/null 2>&1; fi
+fi
+
+# --- computer name
+read -r -p "Computer name [rustos]: " host
+host=$(printf '%s' "$host" | tr -cd 'A-Za-z0-9-')
+[ -n "$host" ] || host=rustos
+echo "$host" > /etc/hostname
+
+# --- time zone
+while true; do
+  read -r -p "Time zone, like Asia/Dubai or Europe/London [UTC]: " tz
+  [ -n "$tz" ] || tz=UTC
+  if [ -f "/usr/share/zoneinfo/$tz" ]; then ln -sf "/usr/share/zoneinfo/$tz" /etc/localtime; break; fi
+  echo "  I don't know that one. Use the Region/City form, for example America/New_York."
+done
+
+# --- language and keyboard (same choices as the RustOS installer on a PC)
+# ask "title" default-number "label" "label" ...   puts the chosen number into REPLY_N
+ask() {
+  local title=$1 def=$2 i=1 a; shift 2
+  echo; echo "$title"
+  for a in "$@"; do
+    if [ "$i" = "$def" ]; then echo "  $i) $a   (default)"; else echo "  $i) $a"; fi
+    i=$((i + 1))
+  done
+  while true; do
+    read -r -p "Number [$def]: " REPLY_N
+    [ -n "$REPLY_N" ] || REPLY_N=$def
+    if [[ "$REPLY_N" =~ ^[0-9]+$ ]] && [ "$REPLY_N" -ge 1 ] && [ "$REPLY_N" -le "$#" ]; then return 0; fi
+    echo "  Type one of the numbers above."
+  done
+}
+LOCALES=(en_US.UTF-8 en_GB.UTF-8 ar_AE.UTF-8 de_DE.UTF-8 fr_FR.UTF-8 es_ES.UTF-8 it_IT.UTF-8 pt_BR.UTF-8 nl_NL.UTF-8 pl_PL.UTF-8 ru_RU.UTF-8 tr_TR.UTF-8 ja_JP.UTF-8 ko_KR.UTF-8 zh_CN.UTF-8)
+LNAMES=("English (United States)" "English (United Kingdom)" "Arabic (United Arab Emirates)" "German" "French" "Spanish" "Italian" "Portuguese (Brazil)" "Dutch" "Polish" "Russian" "Turkish" "Japanese" "Korean" "Chinese (Simplified)")
+ask "Which language do you want RustOS in?" 1 "${LNAMES[@]}"
+LOCALE=${LOCALES[$((REPLY_N - 1))]}
+
+KBDS=("us|us|English (US)" "gb|uk|English (UK)" "us,ara|us|English (US) + Arabic (switch with Alt+Shift)" "ara|us|Arabic only" "de|de-latin1|German" "fr|fr|French" "es|es|Spanish" "it|it|Italian" "br|br-abnt2|Portuguese (Brazil)" "pt|pt-latin1|Portuguese (Portugal)" "pl|pl2|Polish" "us,ru|ru|English (US) + Russian (switch with Alt+Shift)" "tr|trq|Turkish")
+case "$LOCALE" in
+  en_GB*) kdef=2 ;;  ar_*) kdef=3 ;;  de_*) kdef=5 ;;  fr_*) kdef=6 ;;  es_*) kdef=7 ;;  it_*) kdef=8 ;;
+  pt_BR*) kdef=9 ;;  pl_*) kdef=11 ;;  ru_*) kdef=12 ;;  tr_*) kdef=13 ;;  *) kdef=1 ;;
+esac
+knames=()
+for k in "${KBDS[@]}"; do knames+=("${k##*|}"); done
+ask "Which keyboard do you have?" "$kdef" "${knames[@]}"
+IFS='|' read -r KBD_X KBD_CON _ <<<"${KBDS[$((REPLY_N - 1))]}"
+
+sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' /etc/locale.gen
+sed -i "s/^#\(${LOCALE} UTF-8\)/\1/" /etc/locale.gen
+locale-gen >/dev/null 2>&1
+echo "LANG=$LOCALE" > /etc/locale.conf
+echo "KEYMAP=$KBD_CON" > /etc/vconsole.conf
+KBD_VARS=$(printf '%s' "$KBD_X" | sed 's/[^,]//g')
+KBD_OPTS=""; case "$KBD_X" in *,*) KBD_OPTS="grp:alt_shift_toggle" ;; esac
+mkdir -p /etc/X11/xorg.conf.d /etc/skel/.config
+cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<EOF
+Section "InputClass"
+    Identifier "system-keyboard"
+    MatchIsKeyboard "on"
+    Option "XkbLayout" "$KBD_X"
+    Option "XkbOptions" "$KBD_OPTS"
+EndSection
+EOF
+cat > /etc/skel/.config/kxkbrc <<EOF
+[Layout]
+LayoutList=$KBD_X
+VariantList=$KBD_VARS
+Use=true
+ResetOldOptions=true
+Options=$KBD_OPTS
+EOF
+loadkeys "$KBD_CON" >/dev/null 2>&1 || true
+
+# --- user
+while true; do
+  read -r -p "Your user name (small letters, no spaces): " user
+  if [[ "$user" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]] && ! id "$user" >/dev/null 2>&1; then break; fi
+  echo "  Use small letters, numbers, - or _ , starting with a letter. That name must not exist yet."
+done
+while true; do
+  read -r -s -p "Password: " p1; echo
+  read -r -s -p "Password again: " p2; echo
+  if [ -n "$p1" ] && [ "$p1" = "$p2" ]; then break; fi
+  echo "  Those did not match (or were empty). Try again."
+done
+useradd -m -G wheel,audio,video -s /bin/bash "$user"
+printf '%s:%s\n' "$user" "$p1" | chpasswd
+passwd -l root >/dev/null 2>&1
+unset p1 p2
+
+# --- iPad mode (touch-friendly iPad-style desktop; can be turned off any time)
+echo
+echo "RustOS has an iPad mode: an iPad-style home screen, dock and touch keyboard."
+read -r -p "Turn it on? [Y/n]: " ipad
+case "$ipad" in
+  n|N|no|NO) ;;
+  *) install -d -o "$user" -g "$user" "/home/$user/.config"
+     : > "/home/$user/.config/rustos-ipad-mode-wanted"
+     chown "$user:$user" "/home/$user/.config/rustos-ipad-mode-wanted" ;;
+esac
+
+touch "$DONE"
+echo
+echo "All set. Starting the desktop..."
+sleep 2
+exit 0

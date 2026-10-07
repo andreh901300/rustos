@@ -69,10 +69,11 @@ while true; do
         undo  "Undo the last update (go back to older versions)")
   [ -n "$held" ] && menu+=(resume "Resume automatic updates now")
   menu+=(auto  "Turn automatic updates $other"
-         win   "Windows App Support (run and manage .exe programs)"
+         win   "RustOS EXE Center (run .exe programs, setups, DLLs)"
          apps  "Apps (office, video, printing and more)"
          av    "Antivirus (scan files and folders)"
          edu   "Education Center (PDF tools, Canva, study apps)"
+         ipad  "iPad mode and touchscreen (iPad-style desktop, touch keyboard)"
          games "Gaming setup (Steam, drivers, performance tools)"
          log   "Update history")
   choice=$(kdialog --title "$T" --icon rustos \
@@ -84,10 +85,11 @@ while true; do
     auto)  pkexec /usr/local/bin/rustos-autoupdate "$(echo "$other" | tr 'A-Z' 'a-z')" >/dev/null 2>&1 ;;
     undo)   /usr/local/bin/rustos-rollback ;;
     resume) pkexec /usr/local/bin/rustos-autoupdate resume >/dev/null 2>&1 ;;
-    win)    /usr/local/bin/rustos-windows ;;
+    win)    /usr/local/bin/rustos-exe-center ;;
     apps)   /usr/local/bin/rustos-apps ;;
     av)     /usr/local/bin/rustos-antivirus ;;
     edu)    /usr/local/bin/rustos-education ;;
+    ipad)   /usr/local/bin/rustos-ipad-mode ;;
     games) /usr/local/bin/rustos-gaming ;;
     log)   show_log ;;
   esac

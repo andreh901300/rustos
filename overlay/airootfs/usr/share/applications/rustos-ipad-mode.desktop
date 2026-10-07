@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=iPad Mode
+GenericName=Touch-friendly iPad-style desktop
+Comment=Switch RustOS to an iPad-style home screen, dock and touch keyboard (works with mouse and keyboard too)
+Exec=/usr/local/bin/rustos-ipad-mode
+Icon=preferences-desktop-tablet
+Terminal=false
+Categories=System;Settings;
+Keywords=ipad;tablet;touch;touchscreen;dock;keyboard;

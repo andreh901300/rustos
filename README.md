@@ -143,22 +143,30 @@ older NVIDIA cards use the open Nouveau/NVK driver), and installs everything in 
 game's launch options to `gamemoderun mangohud %command%`. It is optional on purpose, so RustOS stays light.
 Not useful inside Hyper-V (no real GPU there); it warns you.
 
-## Windows App Support (.exe)
+## RustOS EXE Center (.exe)
 
-Linux cannot run `.exe` files by itself, so RustOS runs them through **Wine** (and Steam's **Proton** for Steam games),
-the same idea as Windows App Support on Zorin OS. Double-click an `.exe`, `.msi` or `.lnk` and `rustos-run-exe` runs it;
-the first time it offers to install Wine (`rustos-gaming --install wine`: Wine, Mono, Gecko, winetricks and the common
-32-bit libraries). Right-click an `.exe` -> **Run as game** starts it with GameMode and the MangoHud overlay.
+Linux cannot run `.exe` files by itself, and there is no native way to do it. RustOS runs them through **Wine** (and
+Steam's **Proton** for Steam games). Wine is the engine; the **RustOS EXE Center** is the front door. Double-click an
+`.exe`, `.msi` or `.lnk` and `rustos-run-exe` runs it; the first time it offers to install Wine
+(`rustos-gaming --install wine`). Right-click an `.exe` -> **Run as game** (GameMode + MangoHud) or **Add to RustOS EXE Center**.
 
-Menu -> **Windows App Support** (`rustos-windows`) is the control window: install a program from its setup file, list
-the programs you installed, open the Windows C: drive, add fonts / Visual C++ / DirectX / DXVK / .NET (winetricks),
-look a program up in the WineHQ database, uninstall programs, open Wine settings, or reset the Windows environment
-(the old one is kept as `~/.wine.old-DATE`). Programs you install also appear in the normal menu.
+Menu -> **RustOS EXE Center** (`rustos-exe-center`) has a folder, `~/EXE-Center`, where you put your files:
 
-RustOS warns before it runs things known to be troublesome (anti-cheat games, Microsoft Office, Adobe). You can still try them.
-Honest limits: many programs and games work, some don't. Games with kernel anti-cheat usually won't run, and Office /
-Adobe apps are poor under Wine. Use LibreOffice, GIMP, etc. instead (**Switching from Windows** shows replacements).
-Bottles (Flatpak) is available in **RustOS Apps**. Wine package names and the winetricks downloads are unverified on a real install.
+- `Setups`: installers like `cs1.6 setup.exe` or `game-setup.msi` -> **Install a setup**
+- `Runtimes`: .NET, Visual C++ and DirectX installers -> **Install .NET / Visual C++ / DirectX from my files**
+- `DLLs`: extra `.dll` files -> **Install a DLL** (system-wide or next to one program; 32/64-bit is detected from the file;
+  it is registered and Wine is told to prefer it). Double-clicking a `.dll` offers the same.
+- `Programs`: portable programs and games, even whole folders -> **Run a program** / **Run a program as a game**
+
+**Add files** copies what you pick into the right folder by its name; you can also drop files in the folder yourself.
+Other items: download .NET / Visual C++ / DirectX / fonts / DXVK automatically (winetricks), look a program up in the WineHQ
+database, uninstall programs, Wine settings, reset the Windows environment (old one kept as `~/.wine.old-DATE`), and
+**Remove Windows support** (uninstalls Wine; your EXE-Center files stay).
+
+RustOS warns before it runs things known to be troublesome (anti-cheat games, Microsoft Office, Adobe). Honest limits: many
+programs and games work (older games such as Counter-Strike 1.6 usually do), some don't. Games with kernel anti-cheat
+usually won't run, and Office / Adobe apps are poor under Wine. It does not exist on the ARM edition (it needs an
+Intel/AMD PC). Wine package names and winetricks downloads are unverified on a real install.
 
 ## Education Center
 
@@ -194,10 +202,60 @@ so run `build.bat` again to get them in a fresh install.
 
 ## Apps and switching from Windows
 
-At first login RustOS offers **RustOS Apps** (also in the menu): Office (LibreOffice), VLC, Windows program support,
-printing/scanning, GIMP, Thunderbird, OBS, Bottles and the gaming setup. Nothing is installed by default, so RustOS stays light.
+At first login RustOS offers **RustOS Apps** (also in the menu). It lists 50+ apps in groups (office and study, internet and
+chat, music and video, pictures and design, programming, games, Windows programs, tools). Open a group, tick what you want,
+go back, open another group, then press **Install** at the bottom. Nothing is installed by default, so RustOS stays light.
+The list is a plain text file, `overlay/airootfs/usr/share/rustos/apps.catalog`, one app per line
+(`category|id|label|pacman packages|flatpak ids|services|flags`). To add an app, add a line and publish. Package names that
+do not exist are skipped at install time, so a wrong name cannot break anything. Apps that only exist for PCs (flag `x86`)
+are hidden on the ARM edition.
 **Switching from Windows** (menu) opens your Windows drives and files, runs an `.exe`, and lists replacement apps
 (`usr/share/rustos/windows-equivalents.txt`).
+
+## iPad mode and touchscreens
+
+Menu -> **iPad Mode** (also a button on the desktop and in the taskbar, in the Update Center, and **Meta+Ctrl+T**).
+It works with a mouse and keyboard, so you can try it on any PC without a touchscreen.
+
+- **iPad mode** swaps the panel for a floating dock at the bottom (grid icon = all apps, then pinned apps, a **Touch Keyboard**
+  button and an **iPad Mode** button), a thin bar with clock and status icons on top, Papirus icons, a soft wallpaper, and
+  windows that open maximized. The dock's **iPad Mode** button opens a window with **Turn off**.
+- **Touch only** keeps your normal desktop and adds just the touch keyboard and gestures.
+- The touch keyboard is the Wayland on-screen keyboard (Maliit). It shows by itself when you tap a text box; the dock's
+  **Touch Keyboard** button shows or hides it with a mouse click. It needs the Wayland session (the default). The login screen
+  uses the Qt virtual keyboard.
+- Swipe up from the bottom edge of the screen = open windows overview; the top-left corner does the same with the mouse.
+- Turning it off restores your saved panel layout and settings (`~/.config/rustos-ipad`), nothing is deleted.
+- On a touchscreen PC, first login asks if you want it. The ARM edition asks during its first start.
+- `rustos-ipad-mode status | on | touch | off | keyboard` work from a terminal.
+
+**Not tested on real hardware yet**: the dock layout is built by a Plasma script and the gestures use KWin settings, so the
+first run may need small fixes depending on the exact Plasma version. It is an iPad-style desktop, not iPadOS.
+
+## iPad and other ARM devices (experimental, UTM)
+
+An iPad cannot run another system at full speed (iPadOS has no hardware virtualization for apps), so **UTM** emulates the
+hardware: expect it to feel slow. Without JIT (the App Store "UTM SE") it is very slow; the full UTM with JIT is much better.
+Good for the browser, documents and trying RustOS. Not for games. Windows `.exe` support and Steam are switched off on ARM
+(they need an Intel or AMD PC) and say so. Everything else is the same as the PC edition: same package list (only names that
+do not exist for ARM are left out, see `packages-arm-remove.txt`), same language and keyboard questions at first start, same
+settings, plus the iPad mode question.
+
+How it is made (all on GitHub, nothing to run on your PC):
+1. `repo/build-repo.sh` now also builds an **aarch64** update repository next to the normal one. Its dependency list is
+   `packages-extra.txt` minus whatever Arch Linux ARM does not have (it checks the real ARM package lists while building;
+   `packages-arm-remove.txt` is the fallback list).
+2. After the normal publish is green: GitHub -> **Actions** -> **Build RustOS ARM image** -> **Run workflow**. It takes a
+   while. `arm/build-image.sh` starts from the Arch Linux ARM root filesystem, adds the RustOS repository, installs
+   `rustos-base`, sets up UEFI boot (systemd-boot) and writes `RustOS-arm64-VERSION.qcow2`.
+3. Download that file from the finished run (the **Artifacts** section), upload it to Mega, and paste the link into
+   `arm_download_url` in the website's `inc/config.php`.
+4. First boot asks for a computer name, time zone, language, keyboard, user name, password and whether to use iPad mode (`arm/rustos-firstboot`). There is no default
+   password: the Arch Linux ARM `alarm` user is removed and root is locked.
+
+Steps for the iPad owner are in the website's install guide (section "iPad and ARM"). **Nothing in this ARM pipeline has been
+run yet**: expect to fix a few things from the Actions log the first time (package names, boot loader, file sizes).
+If the artifact is too big for GitHub, tell me and the image can be made smaller.
 
 ## Lightweight
 

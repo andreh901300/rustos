@@ -1,0 +1,66 @@
+# RustOS Apps catalog. One app per line, fields separated by |
+#   category | id | label | pacman packages | flatpak ids | services to enable | flags
+# Use - for "none". Flags (comma separated): on = ticked at first, x86 = only offered on PCs/Intel/AMD
+# (hidden on the ARM edition), ui = handled by the picker itself (no packages here).
+# Package names that do not exist in the repositories are skipped at install time, so one wrong name
+# can never break an install. Adding an app = adding a line here.
+Office and study|office|LibreOffice: documents, spreadsheets, slides|libreoffice-fresh|-|-|on
+Office and study|onlyoffice|ONLYOFFICE: Microsoft-style Office look (Flatpak)|-|org.onlyoffice.desktopeditors|-|-
+Office and study|edu|Education Center: PDF tools, Canva and study apps|-|-|-|ui
+Office and study|obsidian|Obsidian: notes (Flatpak)|-|md.obsidian.Obsidian|-|-
+Office and study|calibre|Calibre: e-books|calibre|-|-|-
+Office and study|xournalpp|Xournal++: handwritten notes and PDF marking (great with a pen)|xournalpp|-|-|-
+Office and study|keepassxc|KeePassXC: password manager|keepassxc|-|-|-
+Office and study|print|Printing and scanning|cups cups-filters cups-pdf print-manager hplip sane sane-airscan simple-scan avahi|-|cups.socket cups-browsed.service avahi-daemon.service|-
+Internet and chat|chromium|Chromium browser|chromium|-|-|-
+Internet and chat|mail|Thunderbird: email|thunderbird|-|-|-
+Internet and chat|telegram|Telegram|telegram-desktop|-|-|-
+Internet and chat|signal|Signal|signal-desktop|-|-|-
+Internet and chat|discord|Discord (Flatpak)|-|com.discordapp.Discord|-|x86
+Internet and chat|zoom|Zoom (Flatpak)|-|us.zoom.Zoom|-|x86
+Internet and chat|qbittorrent|qBittorrent: downloads|qbittorrent|-|-|-
+Internet and chat|filezilla|FileZilla: FTP|filezilla|-|-|-
+Internet and chat|kdeconnect|KDE Connect: link your phone|kdeconnect|-|-|-
+Internet and chat|remmina|Remmina: remote desktop (RDP, VNC)|remmina freerdp|-|-|-
+Music and video|media|VLC: plays almost everything|vlc vlc-plugins-all|-|-|on
+Music and video|mpv|mpv: light video player|mpv|-|-|-
+Music and video|spotify|Spotify (Flatpak)|-|com.spotify.Client|-|x86
+Music and video|audacity|Audacity: sound editor|audacity|-|-|-
+Music and video|kdenlive|Kdenlive: video editor|kdenlive|-|-|-
+Music and video|handbrake|HandBrake: convert videos|handbrake|-|-|-
+Music and video|obs|OBS Studio: screen recording and streaming|obs-studio|-|-|-
+Music and video|ytdlp|yt-dlp: download videos from the command line|yt-dlp|-|-|-
+Pictures and design|gimp|GIMP: image editor|gimp|-|-|-
+Pictures and design|krita|Krita: painting and drawing (great with a pen)|krita|-|-|-
+Pictures and design|inkscape|Inkscape: vector graphics|inkscape|-|-|-
+Pictures and design|blender|Blender: 3D|blender|-|-|-
+Pictures and design|darktable|darktable: photo editing|darktable|-|-|-
+Pictures and design|flameshot|Flameshot: screenshots with markup|flameshot|-|-|-
+Programming|code|Visual Studio Code (open source build)|code|-|-|-
+Programming|python|Python with pip|python python-pip python-virtualenv|-|-|-
+Programming|node|Node.js and npm|nodejs npm|-|-|-
+Programming|devtools|Build tools: gcc, make, cmake, git|base-devel cmake git|-|-|-
+Programming|java|Java (OpenJDK)|jdk-openjdk|-|-|-
+Programming|rust|Rust (rustup)|rustup|-|-|-
+Programming|go|Go|go|-|-|-
+Programming|neovim|Neovim|neovim|-|-|-
+Programming|docker|Docker and Compose|docker docker-compose|-|docker.socket|-
+Programming|podman|Podman: containers without a daemon|podman|-|-|-
+Games|games|Gaming setup: Steam, graphics driver, performance tools|-|-|-|ui,x86
+Games|lutris|Lutris: game launcher|lutris|-|-|x86
+Games|heroic|Heroic: Epic and GOG games (Flatpak)|-|com.heroicgameslauncher.hgl|-|x86
+Games|prism|Prism Launcher: Minecraft|prismlauncher|-|-|-
+Games|retroarch|RetroArch: old console games|retroarch retroarch-assets-xmb|-|-|-
+Games|supertuxkart|SuperTuxKart: racing|supertuxkart|-|-|-
+Games|0ad|0 A.D.: ancient war strategy|0ad|-|-|-
+Games|luanti|Luanti (Minetest): block building|luanti|-|-|-
+Games|openttd|OpenTTD: transport tycoon|openttd|-|-|-
+Games|wesnoth|Battle for Wesnoth|wesnoth|-|-|-
+Windows programs|windows|Windows programs: run .exe files (Wine, RustOS EXE Center)|-|-|-|on,ui,x86
+Windows programs|bottles|Bottles: manage Windows programs in a window (Flatpak)|-|com.usebottles.bottles|-|x86
+Windows programs|flatseal|Flatseal: permissions for Flatpak apps|-|com.github.tchx84.Flatseal|-|-
+Tools|bleachbit|BleachBit: clean up space|bleachbit|-|-|-
+Tools|syncthing|Syncthing: sync folders between devices|syncthing|-|-|-
+Tools|gnome-disk|GNOME Disks: drive health and images|gnome-disk-utility|-|-|-
+Tools|bitwarden|Bitwarden: password manager|bitwarden|-|-|-
+Tools|sensors|Temperatures and graphics-card monitor: lm_sensors, nvtop|lm_sensors nvtop|-|-|-

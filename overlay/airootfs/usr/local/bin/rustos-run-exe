@@ -5,7 +5,7 @@
 #   rustos-run-exe --ensure          only make sure Windows support (Wine) is installed and ready
 #   rustos-run-exe                   pick a file first
 # If Wine is not installed yet, it offers to install it (once).
-T="Windows App Support"
+T="RustOS EXE Center"
 
 game=0; ensure_only=0
 case "${1:-}" in
@@ -14,6 +14,11 @@ case "${1:-}" in
 esac
 f="${1:-}"
 
+if [ "$(uname -m)" != x86_64 ]; then
+  kdialog --title "$T" --icon rustos --msgbox "Windows .exe programs need an Intel or AMD (x86) PC.<br>This is the ARM edition of RustOS, so they cannot run here.<br><br>Look for a Linux version of the program, or use its website."
+  exit 1
+fi
+
 ensure_wine() {
   command -v wine >/dev/null 2>&1 && return 0
   if [ -d /run/archiso ]; then
@@ -21,15 +26,15 @@ ensure_wine() {
     return 1
   fi
   kdialog --title "$T" --icon rustos --yes-label "Install support" --no-label "Cancel" --yesno \
-"<b>This needs Windows App Support.</b><br><br>
+"<b>This needs Windows support.</b><br><br>
 RustOS runs many Windows programs and games with <b>Wine</b>. It is not installed yet.<br><br>
 Install it now? It downloads a few hundred MB and asks for your password. After that, every .exe opens with a double-click.<br><br>
 Not every program works. Games with anti-cheat, Microsoft Office and Adobe programs usually do not." || return 1
   rm -f /run/rustos-gaming.status
-  konsole --nofork --title "Windows App Support" -e bash -c \
+  konsole --nofork --title "RustOS EXE Center" -e bash -c \
     'sudo /usr/local/bin/rustos-gaming --install wine; echo; read -r -p "Press Enter to close this window. " _'
   if [ "$(cat /run/rustos-gaming.status 2>/dev/null)" != ok ] || ! command -v wine >/dev/null 2>&1; then
-    kdialog --title "$T" --icon rustos --sorry "Windows App Support was not installed.<br>Scroll the terminal window for the first error, or try again."
+    kdialog --title "$T" --icon rustos --sorry "Windows support was not installed.<br>Scroll the terminal window for the first error, or try again."
     return 1
   fi
   return 0
@@ -51,6 +56,11 @@ if [ -z "$f" ]; then
   f=$(kdialog --title "$T" --icon rustos --getopenfilename "$HOME" "*.exe *.EXE *.msi *.MSI *.bat *.BAT *.lnk *.LNK|Windows programs") || exit 0
 fi
 [ -e "$f" ] || { kdialog --title "$T" --icon rustos --error "That file was not found:<br>$f"; exit 1; }
+
+# a .dll cannot be "run": offer to install it instead
+case "${f,,}" in
+  *.dll|*.ocx) exec /usr/local/bin/rustos-exe-center --dll "$f" ;;
+esac
 
 # warn about things that are known not to work well (the person can still run it)
 known_problem() {

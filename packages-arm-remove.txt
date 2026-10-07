@@ -1,0 +1,10 @@
+# Packages from packages-extra.txt that the ARM edition leaves out because they do not exist for ARM (or only make
+# sense on a PC). Everything else is the same as the PC edition. Also used as the only filter if the Arch Linux ARM
+# package lists cannot be downloaded while building.
+# hyperv: Hyper-V is a PC thing.  sof-firmware: Intel sound chips.  vulkan-intel / vulkan-radeon: PC graphics.
+# reflector: picks Arch (x86) mirrors, which would break the ARM mirror list.
+hyperv
+sof-firmware
+vulkan-intel
+vulkan-radeon
+reflector

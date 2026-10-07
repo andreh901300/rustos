@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Touch Keyboard
+GenericName=On-screen keyboard
+Comment=Show or hide the on-screen keyboard (click it with the mouse to test without a touchscreen)
+Exec=/usr/local/bin/rustos-ipad-mode keyboard
+Icon=input-keyboard-virtual
+Terminal=false
+Categories=System;Utility;
+Keywords=keyboard;onscreen;touch;virtual;
