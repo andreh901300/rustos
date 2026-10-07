@@ -42,10 +42,17 @@ if [ -z "$(git status --porcelain)" ]; then
   pause; exit 0
 fi
 
+CURVER=$(tr -d ' \r\n' < VERSION 2>/dev/null)
+echo "This folder is RustOS ${CURVER:-?}."
 read -r -p "One line for the What's new list (or just press Enter to skip): " MSG
 MSG=$(printf '%s' "$MSG" | tr '\r\n' '  ' | sed 's/^ *//; s/ *$//' | cut -c1-120)
-read -r -p "New version number? (like 2.3, or just press Enter to keep the same version): " NEWVER
-NEWVER=$(printf '%s' "$NEWVER" | tr -d ' \r\n')
+if printf '%s' "$MSG" | grep -Eq '^v?[0-9]+(\.[0-9]+){0,2}$'; then
+  echo "  ('$MSG' looks like a version number, not a What's new line - skipping it. The next question is for the version.)"
+  MSG=""
+fi
+read -r -p "New version number? Press Enter to keep ${CURVER:-the same version}: " NEWVER
+NEWVER=$(printf '%s' "$NEWVER" | tr -d ' \r\nvV')
+[ "$NEWVER" = "$CURVER" ] && NEWVER=""
 if [ -n "$NEWVER" ] && ! printf '%s' "$NEWVER" | grep -Eq '^[0-9]+(\.[0-9]+){0,2}$'; then
   echo "Version '$NEWVER' is not like 1.2 - keeping the old version number."
   NEWVER=""
@@ -58,10 +65,12 @@ vmm() { printf '%s' "$1" | awk -F. '{ print $1 * 1000000 + $2 }'; }
 hist=$(git log origin/main --format=%H -- VERSION 2>/dev/null | while read -r h; do
          git show "$h:VERSION" 2>/dev/null | tr -d ' \r\n'; echo; done |
        grep -E '^[0-9]+(\.[0-9]+)*$' | sort -V | tail -n1)
+# the version already in this folder counts too (it may be newer than what GitHub has)
+if [ -n "$CURVER" ] && { [ -z "$hist" ] || [ "$(vmm "$CURVER")" -gt "$(vmm "$hist")" ]; }; then hist=$CURVER; fi
 target=${NEWVER:-$(tr -d ' \r\n' < VERSION 2>/dev/null)}
 while [ -n "$hist" ] && [ -n "$target" ] && [ "$(vmm "$target")" -lt "$(vmm "$hist")" ]; do
   echo
-  echo "Version $target is LOWER than $hist, which you already published. Installed systems would ignore the update."
+  echo "Version $target is LOWER than $hist (already published or already in this folder). Installed systems would ignore the update."
   read -r -p "Type a version higher than $hist (like $(( ${hist%%.*} )).$(( $(printf '%s' "$hist" | cut -d. -f2) + 1 ))): " NEWVER
   NEWVER=$(printf '%s' "$NEWVER" | tr -d ' \r\n')
   printf '%s' "$NEWVER" | grep -Eq '^[0-9]+(\.[0-9]+){0,2}$' || NEWVER=""
@@ -76,7 +85,7 @@ if [ -n "$MSG" ] || [ -n "$NEWVER" ]; then
     function line_msg() { if (ENVIRON["MSG"] != "") print "- " ENVIRON["MSG"] }
     !seen && /^== / {
       seen = 1
-      if (ENVIRON["NEWVER"] != "") { print "== RustOS " ENVIRON["NEWVER"] " =="; line_msg(); print ""; print; next }
+      if (ENVIRON["NEWVER"] != "" && $0 !~ ("^== RustOS " ENVIRON["NEWVER"] " ==")) { print "== RustOS " ENVIRON["NEWVER"] " =="; line_msg(); print ""; print; next }
       print; line_msg(); next
     }
     { print }

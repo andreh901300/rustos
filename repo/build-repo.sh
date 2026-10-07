@@ -216,9 +216,12 @@ done
 
 [ -f repo/rustos-pub.gpg ] && cp repo/rustos-pub.gpg "$OUT/rustos-pub.gpg"
 touch "$OUT/.nojekyll"
-cat > "$OUT/index.html" <<EOF
-<!doctype html><meta charset=utf-8><title>RustOS package repository</title>
-<h1>RustOS package repository</h1><p>Latest: <code>rustos-base $PKGVER</code></p>
-<p>This is a pacman repository for RustOS. It is used automatically by installed systems.</p>
-EOF
+# The repository page (with a "Check" button) and latest.json, which the website's Check button reads too.
+BUILT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+X86_NOTE="published"; ARM_NOTE="not published"
+[ -f "$OUT/aarch64/rustos.db" ] && ARM_NOTE="published"
+sed -e "s|@PKGVER@|$PKGVER|g" -e "s|@VERSION@|$BASEV|g" -e "s|@BUILT@|$BUILT|g" \
+    -e "s|@X86@|$X86_NOTE|g" -e "s|@ARM@|$ARM_NOTE|g" repo/index.template.html > "$OUT/index.html"
+printf '{"name":"rustos-base","version":"%s","pkgver":"%s","built":"%s","x86_64":true,"aarch64":%s}\n' \
+  "$BASEV" "$PKGVER" "$BUILT" "$([ "$ARM_NOTE" = published ] && echo true || echo false)" > "$OUT/latest.json"
 echo "DONE: repository for rustos-base $PKGVER is in $OUT"

@@ -257,6 +257,14 @@ Steps for the iPad owner are in the website's install guide (section "iPad and A
 run yet**: expect to fix a few things from the Actions log the first time (package names, boot loader, file sizes).
 If the artifact is too big for GitHub, tell me and the image can be made smaller.
 
+## The website and the repository page
+
+The website (`rustos-site`, PHP) is a RustOS desktop: the fastfetch window can be dragged, there is a custom cursor, an
+animated demo, a Builds page (PC ISO, ARM image for UTM, how to build your own) and a **Check** button that reads
+`latest.json` from the update channel. Upload instructions are in the site's `README-UPLOAD.txt`.
+The GitHub Pages repository page is generated from `repo/index.template.html` on every publish (it has its own Check button,
+and `latest.json` is written next to it).
+
 ## Lightweight
 
 - No indexer (Baloo is off), no bloat apps, no sshd/cloud-init, a lean Plasma package list.

@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RustOS update repository</title>
+<meta name="robots" content="noindex">
+<style>
+:root{--ink:#121d1a;--ink2:#1b2a26;--plate:#eef0ec;--primer:#dfe2dd;--rust:#c2410c;--hot:#ff9a3c;--ok:#4fd1a5;--bad:#ff6b5e;--soft:#a9b8b1;
+ --mono:ui-monospace,"Cascadia Mono","JetBrains Mono",Menlo,Consolas,monospace;--body:system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ink);color:#e9ede8;font:16px/1.55 var(--body)}
+a{color:var(--hot)}
+.wrap{width:min(100% - 2rem,56rem);margin:0 auto}
+header{padding:1.6rem 0 1rem;display:flex;align-items:center;gap:.8rem;flex-wrap:wrap}
+header svg{width:38px;height:38px}
+header h1{margin:0;font:800 1.5rem/1.1 var(--body);letter-spacing:.01em}
+header .ver{margin-left:auto;font:400 .85rem var(--mono);color:var(--soft)}
+.lead{margin:.2rem 0 1.6rem;color:#cfd9d4;max-width:40rem}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin-bottom:1rem}
+.card{background:var(--ink2);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:1.1rem 1.2rem}
+.card h2{margin:0 0 .5rem;font:700 1rem var(--body)}
+.pill{display:inline-flex;align-items:center;gap:.5rem;font:400 .85rem var(--mono);color:var(--soft)}
+.dot{width:.7rem;height:.7rem;border-radius:50%;background:#55645e;flex:none}
+.ok .dot{background:var(--ok)}.bad .dot{background:var(--bad)}.wait .dot{background:var(--hot);animation:b .8s steps(1) infinite}
+@keyframes b{50%{opacity:.2}}
+.big{font:700 1.4rem/1.2 var(--mono);color:#fff;word-break:break-all}
+button{font:700 1rem var(--body);padding:.8rem 1.3rem;border-radius:4px;border:2px solid var(--hot);background:var(--hot);color:var(--ink);cursor:pointer}
+button:hover{background:#ffb066;border-color:#ffb066}
+button:disabled{opacity:.6;cursor:wait}
+button.ghost{background:transparent;color:#e9ede8;border-color:rgba(233,237,232,.45);padding:.4rem .8rem;font-size:.85rem}
+.bar{display:flex;gap:.8rem;align-items:center;flex-wrap:wrap;margin:1.2rem 0}
+ul.rows{list-style:none;margin:0;padding:0;display:grid;gap:.4rem;font:400 .9rem var(--mono)}
+ul.rows li{display:flex;gap:.7rem;align-items:baseline}
+ul.rows em{margin-left:auto;font-style:normal;color:var(--soft)}
+.verdict{margin-top:.8rem;padding-top:.8rem;border-top:1px solid rgba(255,255,255,.14);font:400 .98rem var(--body);min-height:1.5em}
+pre{margin:.5rem 0 0;padding:.9rem 1rem;background:#0c1311;border-radius:6px;overflow:auto;font:400 .85rem/1.5 var(--mono);color:#dfe7e2}
+.files a{display:inline-block;margin:.15rem .8rem .15rem 0;font:400 .9rem var(--mono)}
+footer{padding:2rem 0 3rem;color:var(--soft);font-size:.9rem}
+@media(max-width:40rem){.grid{grid-template-columns:minmax(0,1fr)}}
+@media (prefers-reduced-motion:reduce){.wait .dot{animation:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M32 3 57 17.5v29L32 61 7 46.5v-29z" fill="#e56a24"/><path d="M24 46V18h11a9 9 0 0 1 3 17.5L46 46h-7l-7-9h-2v9zm7-15h4a3.2 3.2 0 0 0 0-6.4h-4z" fill="#fff"/></svg>
+  <h1>RustOS update repository</h1>
+  <span class="ver" id="ver" data-version="@VERSION@" data-pkgver="@PKGVER@">rustos-base @PKGVER@</span>
+</header>
+<p class="lead">Installed RustOS systems read their updates from here, automatically. You do not need to do anything on this page. The button checks that everything is in place.</p>
+
+<div class="grid">
+  <section class="card">
+    <h2>Latest package</h2>
+    <div class="big">@PKGVER@</div>
+    <p class="pill" style="margin:.5rem 0 0">Built @BUILT@ &middot; RustOS @VERSION@</p>
+  </section>
+  <section class="card">
+    <h2>Editions</h2>
+    <ul class="rows">
+      <li><span>PC (x86_64)</span><em>@X86@</em></li>
+      <li><span>iPad and ARM (aarch64)</span><em>@ARM@</em></li>
+    </ul>
+  </section>
+</div>
+
+<section class="card">
+  <h2>Check the repository</h2>
+  <div class="bar"><button id="check" type="button">Check now</button><span class="pill" id="when">Not checked yet</span></div>
+  <ul class="rows" id="rows" aria-live="polite"></ul>
+  <div class="verdict" id="verdict"></div>
+</section>
+
+<section class="card" style="margin-top:1rem">
+  <h2>Use it by hand (advanced)</h2>
+  <p style="margin:0;color:#cfd9d4">RustOS adds this to <code>/etc/pacman.conf</code> by itself. For another Arch system:</p>
+  <pre id="conf"></pre>
+  <div class="bar"><button class="ghost" id="copy" type="button">Copy</button><span class="pill" id="copied"></span></div>
+  <p style="margin:0;color:#cfd9d4">The signing key is here: <a href="rustos-pub.gpg">rustos-pub.gpg</a>.</p>
+</section>
+
+<section class="card files" style="margin-top:1rem">
+  <h2>Files</h2>
+  <a href="x86_64/">x86_64/</a><a href="aarch64/">aarch64/</a><a href="latest.json">latest.json</a><a href="rustos-pub.gpg">rustos-pub.gpg</a>
+</section>
+<footer>RustOS is built on Arch Linux and KDE Plasma. This page is generated on every publish.</footer>
+</div>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var base = location.href.replace(/[#?].*$/, '').replace(/index\.html$/, '').replace(/\/?$/, '/');
+  $('conf').textContent = '[rustos]\nSigLevel = Required DatabaseRequired\nServer = ' + base.replace(/\/$/, '') + '/$arch';
+  $('copy').addEventListener('click', function () {
+    var t = $('conf').textContent;
+    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () { $('copied').textContent = 'Copied'; }, function () { $('copied').textContent = 'Select the text and copy it'; });
+  });
+  function row(cls, text, extra) {
+    var li = document.createElement('li');
+    li.className = cls;
+    li.innerHTML = '<span class="dot"></span><span></span><em></em>';
+    li.children[1].textContent = text; li.children[2].textContent = extra || '';
+    $('rows').appendChild(li);
+    return li;
+  }
+  function set(li, cls, text, extra) { li.className = cls; li.children[1].textContent = text; li.children[2].textContent = extra || ''; }
+  async function head(path) {
+    var t = performance.now();
+    try { var r = await fetch(base + path + '?t=' + Date.now(), { method: 'HEAD', cache: 'no-store' }); return { ok: r.ok, ms: Math.round(performance.now() - t) }; }
+    catch (e) { return { ok: false, ms: 0 }; }
+  }
+  $('check').addEventListener('click', async function () {
+    var btn = $('check'); btn.disabled = true; btn.textContent = 'Checking...';
+    $('rows').innerHTML = ''; $('verdict').textContent = '';
+    var a = row('wait', 'Status file (latest.json)');
+    var b = row('wait', 'PC database and signature');
+    var c = row('wait', 'ARM database and signature');
+    var k = row('wait', 'Signing key');
+    var info = null;
+    try {
+      var r = await fetch(base + 'latest.json?t=' + Date.now(), { cache: 'no-store' });
+      if (r.ok) { info = await r.json(); set(a, 'ok', 'rustos-base ' + info.pkgver, info.built ? info.built.slice(0, 10) : ''); }
+      else { set(a, 'bad', 'Status file missing', 'HTTP ' + r.status); }
+    } catch (e) { set(a, 'bad', 'Could not read the status file', ''); }
+    var x1 = await head('x86_64/rustos.db'), x2 = await head('x86_64/rustos.db.sig');
+    set(b, x1.ok && x2.ok ? 'ok' : 'bad', x1.ok && x2.ok ? 'PC database and signature are there' : 'PC database or signature is missing', x1.ok ? x1.ms + ' ms' : '');
+    var y1 = await head('aarch64/rustos.db'), y2 = await head('aarch64/rustos.db.sig');
+    set(c, y1.ok && y2.ok ? 'ok' : 'bad', y1.ok && y2.ok ? 'ARM database and signature are there' : 'ARM database or signature is missing', y1.ok ? y1.ms + ' ms' : '');
+    var g = await head('rustos-pub.gpg');
+    set(k, g.ok ? 'ok' : 'bad', g.ok ? 'Signing key is published' : 'Signing key is missing', g.ok ? g.ms + ' ms' : '');
+    var pk = $('ver').dataset.pkgver, v;
+    if (info && info.pkgver && info.pkgver !== pk) v = 'A newer version (' + info.pkgver + ') is out. Reload this page to see it.';
+    else if (x1.ok && x2.ok && y1.ok && y2.ok && g.ok && info) v = 'All good. Both editions are being served.';
+    else if (x1.ok && x2.ok) v = 'The PC repository is fine, but the ARM repository or the signing key has a problem.';
+    else v = 'The PC repository has a problem. Check that the last publish was green on the Actions tab.';
+    $('verdict').textContent = v;
+    $('when').textContent = 'Checked at ' + new Date().toLocaleTimeString();
+    btn.disabled = false; btn.textContent = 'Check again';
+  });
+})();
+</script>
+</body>
+</html>

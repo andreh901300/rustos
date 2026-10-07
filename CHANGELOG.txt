@@ -1,10 +1,8 @@
 RustOS change list. Newest on top. Installed systems show this in "What's new" after an update.
 Each "== RustOS x.y ==" line starts a version. publish.bat adds a line under the newest version for you.
 
-== RustOS 2.4 ==
-- 2.4
-
 == RustOS 2.7 ==
+- jus the check thing
 - New iPad mode: an iPad-style home screen with a floating dock, app grid, thin top bar, iPad-style icons, windows that open full screen and a touch keyboard. Works with mouse and keyboard too, so you can try it on any PC without a touchscreen
 - Button to open it: "iPad Mode" in the menu, on the desktop, in the taskbar and in the Update Center, or press Meta+Ctrl+T. Turn it off the same way and your old desktop comes back exactly as it was
 - Touchscreen support for PCs and iPad: on-screen keyboard (also on the login screen), swipe up from the bottom edge to see open windows, "Touch only" option that keeps your normal desktop, auto-rotate support
