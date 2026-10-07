@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=RustOS Apps
-Comment=Add office, video, printing, Windows .exe support and more
+Comment=Add office, video, printing, Windows program support and more
 Exec=/usr/local/bin/rustos-apps
 Icon=rustos
 Terminal=false

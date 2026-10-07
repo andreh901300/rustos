@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# RustOS Windows App Support: run and manage Windows programs (Wine), like "Windows App Support" on Zorin OS.
+# Start it from the app menu ("Windows App Support") or run:  rustos-windows
+T="Windows App Support"
+RUN=/usr/local/bin/rustos-run-exe
+WINEMENU="${XDG_DATA_HOME:-$HOME/.local/share}/applications/wine"
+
+# ============================================================== (terminal window) install extras with winetricks
+if [ "${1:-}" = --extras ]; then
+  shift
+  echo "== Installing: $*"
+  echo "(Windows downloads are fetched from the original sources. This can take several minutes.)"
+  if winetricks -q "$@"; then echo ok > /tmp/rustos-windows.status; else echo failed > /tmp/rustos-windows.status; fi
+  echo
+  read -r -p "Press Enter to close this window. " _
+  exit 0
+fi
+
+if [ -d /run/archiso ]; then
+  kdialog --title "$T" --icon rustos --msgbox "Windows App Support works on the installed RustOS.<br>Install it first, then open this again."
+  exit 0
+fi
+
+need_wine() { "$RUN" --ensure; command -v wine >/dev/null 2>&1; }
+
+programs() { # lists installed Windows programs that Wine added to the menu
+  [ -d "$WINEMENU" ] || return 0
+  find "$WINEMENU" -name '*.desktop' -type f 2>/dev/null | sort
+}
+
+list_programs() {
+  local files=() menu=() f n i=0
+  while IFS= read -r f; do
+    n=$(grep -m1 '^Name=' "$f" | cut -d= -f2-)
+    case "${n,,}" in ""|*uninstall*|*"wine"*) continue ;; esac
+    files+=("$f"); menu+=("$i" "$n"); i=$((i + 1))
+  done < <(programs)
+  if [ "$i" = 0 ]; then
+    kdialog --title "$T" --icon rustos --msgbox "No Windows programs installed yet.<br><br>Choose <b>Install a Windows program</b> and pick its setup file. Programs you install also show up in the main menu."
+    return 0
+  fi
+  local pick
+  pick=$(kdialog --title "$T" --icon rustos --menu "Your Windows programs" "${menu[@]}") || return 0
+  local ex
+  ex=$(grep -m1 '^Exec=' "${files[$pick]}" | cut -d= -f2-)
+  [ -n "$ex" ] && ( cd "$HOME" && nohup bash -c "$ex" >/dev/null 2>&1 & )
+}
+
+extras() {
+  need_wine || return 0
+  command -v winetricks >/dev/null 2>&1 || { kdialog --title "$T" --icon rustos --sorry "winetricks is missing. Run Windows App Support setup again."; return 0; }
+  local picked
+  mapfile -t picked < <(kdialog --title "$T" --icon rustos --separate-output --checklist \
+    "Add what a program asks for."$'\n'"Most programs need none of these." \
+    fonts "Windows fonts (Arial, Times New Roman...)" off \
+    vc    "Visual C++ libraries (many programs and games need them)" on \
+    dx    "DirectX libraries for older games" off \
+    dxvk  "DXVK: faster DirectX 9 to 11 games (uses Vulkan)" off \
+    net   ".NET Framework 4.8 (slow, may fail; Wine Mono already runs many .NET programs)" off) || return 0
+  [ "${#picked[@]}" -gt 0 ] || return 0
+  local verbs=() p
+  for p in "${picked[@]}"; do
+    case "$p" in
+      fonts) verbs+=(corefonts) ;;
+      vc)    verbs+=(vcrun2022) ;;
+      dx)    verbs+=(d3dx9 d3dx11_43 d3dcompiler_47) ;;
+      dxvk)  verbs+=(dxvk) ;;
+      net)   verbs+=(dotnet48) ;;
+    esac
+  done
+  rm -f /tmp/rustos-windows.status
+  konsole --nofork --title "$T" -e /usr/local/bin/rustos-windows --extras "${verbs[@]}"
+  if [ "$(cat /tmp/rustos-windows.status 2>/dev/null)" = ok ]; then
+    kdialog --title "$T" --icon rustos --msgbox "Done. Try your program again."
+  else
+    kdialog --title "$T" --icon rustos --sorry "Something did not install. Scroll the terminal window for the first error. Some Windows downloads are unreliable; try again later."
+  fi
+}
+
+compat() {
+  local q enc
+  q=$(kdialog --title "$T" --icon rustos --inputbox "Name of the program or game:" "") || return 0
+  [ -n "$q" ] || return 0
+  enc=$(printf '%s' "$q" | od -An -tx1 | tr -d '\n' | sed 's/ /%/g')
+  xdg-open "https://appdb.winehq.org/objectManager.php?sClass=application&sTitle=$enc" >/dev/null 2>&1 &
+  kdialog --title "$T" --icon rustos --msgbox "The WineHQ database was opened in your browser.<br>Look for a <b>Platinum</b>, <b>Gold</b> or <b>Silver</b> rating.<br><br>For Steam games also check <b>protondb.com</b>."
+}
+
+reset_env() {
+  [ -d "$HOME/.wine" ] || { kdialog --title "$T" --icon rustos --msgbox "There is nothing to reset yet."; return 0; }
+  kdialog --title "$T" --icon rustos --warningyesno \
+    "<b>Reset the Windows environment?</b><br><br>Windows programs you installed here will be removed from the menu and need to be installed again.<br><br>Your old Windows folder is kept as <tt>.wine.old-DATE</tt> in your home folder, so saved games and documents are not lost. You can delete it later." || return 0
+  pkill -u "$USER" -x wineserver 2>/dev/null || true
+  mv "$HOME/.wine" "$HOME/.wine.old-$(date +%F-%H%M)"
+  rm -rf "$WINEMENU"
+  command -v kbuildsycoca6 >/dev/null 2>&1 && kbuildsycoca6 >/dev/null 2>&1
+  kdialog --title "$T" --icon rustos --msgbox "Done. A fresh Windows environment is made the next time you open a Windows program."
+}
+
+while true; do
+  ver=$(wine --version 2>/dev/null || echo "not installed yet")
+  choice=$(kdialog --title "$T" --icon rustos --menu \
+    "Run Windows programs and games on RustOS (Wine)"$'\n'"Wine: $ver" \
+    install "Install a Windows program (pick its setup .exe or .msi)" \
+    mine    "My Windows programs" \
+    run     "Run a Windows program without installing it" \
+    drive   "Open the Windows C: drive" \
+    extras  "Add fonts, Visual C++, DirectX or .NET" \
+    compat  "Will my program work? (look it up)" \
+    remove  "Uninstall Windows programs" \
+    config  "Windows settings (version, graphics, audio)" \
+    reset   "Reset the Windows environment" \
+    about   "What works and what does not") || exit 0
+  case "$choice" in
+    install|run) "$RUN" ;;
+    mine)   need_wine && list_programs ;;
+    drive)  need_wine && { [ -d "$HOME/.wine/drive_c" ] || "$RUN" --ensure; xdg-open "$HOME/.wine/drive_c" >/dev/null 2>&1 & } ;;
+    extras) extras ;;
+    compat) compat ;;
+    remove) need_wine && { WINEDEBUG=-all wine uninstaller >/dev/null 2>&1 & } ;;
+    config) need_wine && { WINEDEBUG=-all winecfg >/dev/null 2>&1 & } ;;
+    reset)  reset_env ;;
+    about)
+      kdialog --title "$T" --icon rustos --msgbox \
+"<b>How it works</b><br>RustOS runs Windows programs with <b>Wine</b>, and Steam games with <b>Proton</b>. It is the same idea as Windows App Support on Zorin OS: Wine with a friendly front door.<br><br>\
+<b>Usually works</b><br>&bull; Many everyday programs, older programs and installers<br>&bull; A lot of games, especially from Steam (check protondb.com)<br><br>\
+<b>Often does not work</b><br>&bull; Games with kernel anti-cheat (Valorant, many online shooters)<br>&bull; Microsoft Office and Adobe programs<br>&bull; Programs that need special Windows drivers (some printers, hardware tools)<br>&bull; Some copy-protection systems<br><br>\
+Nothing here can promise a program will work. Try it: nothing is harmed if it fails." ;;
+  esac
+done

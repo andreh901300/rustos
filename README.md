@@ -143,14 +143,22 @@ older NVIDIA cards use the open Nouveau/NVK driver), and installs everything in 
 game's launch options to `gamemoderun mangohud %command%`. It is optional on purpose, so RustOS stays light.
 Not useful inside Hyper-V (no real GPU there); it warns you.
 
-## Windows programs (.exe)
+## Windows App Support (.exe)
 
-Linux cannot run `.exe` files by itself, so RustOS runs them through **Wine** (and Steam's **Proton** for Steam games).
-Double-click an `.exe` or `.msi` and `rustos-run-exe` runs it; the first time it offers to install Wine
-(`rustos-gaming --install wine`). Right-click an `.exe` -> **Run as game** starts it with GameMode and the MangoHud overlay.
-Honest limits: many programs and games work, some don't. Games with kernel anti-cheat (some online shooters) usually
-won't run, and Microsoft Office / Adobe apps are poor under Wine. Use LibreOffice, GIMP, etc. instead
-(**Switching from Windows** shows replacements). Bottles (Flatpak) is available in **RustOS Apps** if you want a window to manage Windows programs.
+Linux cannot run `.exe` files by itself, so RustOS runs them through **Wine** (and Steam's **Proton** for Steam games),
+the same idea as Windows App Support on Zorin OS. Double-click an `.exe`, `.msi` or `.lnk` and `rustos-run-exe` runs it;
+the first time it offers to install Wine (`rustos-gaming --install wine`: Wine, Mono, Gecko, winetricks and the common
+32-bit libraries). Right-click an `.exe` -> **Run as game** starts it with GameMode and the MangoHud overlay.
+
+Menu -> **Windows App Support** (`rustos-windows`) is the control window: install a program from its setup file, list
+the programs you installed, open the Windows C: drive, add fonts / Visual C++ / DirectX / DXVK / .NET (winetricks),
+look a program up in the WineHQ database, uninstall programs, open Wine settings, or reset the Windows environment
+(the old one is kept as `~/.wine.old-DATE`). Programs you install also appear in the normal menu.
+
+RustOS warns before it runs things known to be troublesome (anti-cheat games, Microsoft Office, Adobe). You can still try them.
+Honest limits: many programs and games work, some don't. Games with kernel anti-cheat usually won't run, and Office /
+Adobe apps are poor under Wine. Use LibreOffice, GIMP, etc. instead (**Switching from Windows** shows replacements).
+Bottles (Flatpak) is available in **RustOS Apps**. Wine package names and the winetricks downloads are unverified on a real install.
 
 ## Education Center
 

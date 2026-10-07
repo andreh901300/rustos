@@ -27,7 +27,7 @@ windows_files() {
 while true; do
   choice=$(kdialog --title "$T" --icon rustos --menu "What do you want to do?" \
     files "Open my Windows files" \
-    exe   "Run a Windows program (.exe)" \
+    exe   "Windows App Support: run and manage .exe programs" \
     find  "Find a replacement for a Windows app" \
     apps  "Add apps: office, video, printing, gaming" \
     edu   "Education Center: PDF tools, Canva, study apps" \
@@ -35,7 +35,7 @@ while true; do
     tips  "Good to know when you switch") || exit 0
   case "$choice" in
     files) windows_files ;;
-    exe)   /usr/local/bin/rustos-run-exe ;;
+    exe)   /usr/local/bin/rustos-windows ;;
     find)  kdialog --title "Windows app replacements" --icon rustos --textbox "$EQ" 760 560 ;;
     apps)  /usr/local/bin/rustos-apps ;;
     edu)   /usr/local/bin/rustos-education ;;

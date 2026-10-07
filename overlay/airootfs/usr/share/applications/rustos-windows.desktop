@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Windows App Support
+Comment=Run and manage Windows programs and games (Wine)
+Exec=/usr/local/bin/rustos-windows
+Icon=application-x-ms-dos-executable
+Terminal=false
+Categories=System;Utility;

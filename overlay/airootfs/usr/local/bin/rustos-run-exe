@@ -1,40 +1,88 @@
 #!/usr/bin/env bash
-# Runs a Windows program (.exe, .msi, .bat) with Wine. Double-click a .exe and this opens it.
+# Runs a Windows program (.exe, .msi, .bat, .lnk) with Wine. Double-click a .exe and this opens it.
 #   rustos-run-exe file.exe          run it
 #   rustos-run-exe --game file.exe   run it with GameMode and the MangoHud overlay
+#   rustos-run-exe --ensure          only make sure Windows support (Wine) is installed and ready
 #   rustos-run-exe                   pick a file first
 # If Wine is not installed yet, it offers to install it (once).
-T="Windows programs"
+T="Windows App Support"
 
-game=0
-if [ "${1:-}" = --game ]; then game=1; shift; fi
+game=0; ensure_only=0
+case "${1:-}" in
+  --game)   game=1; shift ;;
+  --ensure) ensure_only=1; shift ;;
+esac
 f="${1:-}"
 
+ensure_wine() {
+  command -v wine >/dev/null 2>&1 && return 0
+  if [ -d /run/archiso ]; then
+    kdialog --title "$T" --icon rustos --msgbox "Windows programs can be run after RustOS is installed on this PC."
+    return 1
+  fi
+  kdialog --title "$T" --icon rustos --yes-label "Install support" --no-label "Cancel" --yesno \
+"<b>This needs Windows App Support.</b><br><br>
+RustOS runs many Windows programs and games with <b>Wine</b>. It is not installed yet.<br><br>
+Install it now? It downloads a few hundred MB and asks for your password. After that, every .exe opens with a double-click.<br><br>
+Not every program works. Games with anti-cheat, Microsoft Office and Adobe programs usually do not." || return 1
+  rm -f /run/rustos-gaming.status
+  konsole --nofork --title "Windows App Support" -e bash -c \
+    'sudo /usr/local/bin/rustos-gaming --install wine; echo; read -r -p "Press Enter to close this window. " _'
+  if [ "$(cat /run/rustos-gaming.status 2>/dev/null)" != ok ] || ! command -v wine >/dev/null 2>&1; then
+    kdialog --title "$T" --icon rustos --sorry "Windows App Support was not installed.<br>Scroll the terminal window for the first error, or try again."
+    return 1
+  fi
+  return 0
+}
+
+prepare_prefix() {
+  [ -d "$HOME/.wine" ] && return 0
+  kdialog --title "$T" --passivepopup "Setting up the Windows environment. This only happens the first time and can take a minute." 8 2>/dev/null
+  WINEDEBUG=-all wineboot -u >/dev/null 2>&1
+  return 0
+}
+
+if [ "$ensure_only" = 1 ]; then
+  ensure_wine && prepare_prefix
+  exit 0
+fi
+
 if [ -z "$f" ]; then
-  f=$(kdialog --title "$T" --icon rustos --getopenfilename "$HOME" "*.exe *.EXE *.msi *.MSI *.bat *.BAT|Windows programs") || exit 0
+  f=$(kdialog --title "$T" --icon rustos --getopenfilename "$HOME" "*.exe *.EXE *.msi *.MSI *.bat *.BAT *.lnk *.LNK|Windows programs") || exit 0
 fi
 [ -e "$f" ] || { kdialog --title "$T" --icon rustos --error "That file was not found:<br>$f"; exit 1; }
 
-if ! command -v wine >/dev/null 2>&1; then
-  if [ -d /run/archiso ]; then
-    kdialog --title "$T" --icon rustos --msgbox "Windows programs can be run after RustOS is installed on this PC."
-    exit 1
-  fi
-  kdialog --title "$T" --icon rustos --yes-label "Install support" --no-label "Cancel" --yesno \
-"<b>This is a Windows program.</b><br><br>
-RustOS runs many Windows programs and games with <b>Wine</b>. It is not installed yet.<br><br>
-Install it now? It downloads a few hundred MB and asks for your password. After that, every .exe opens with a double-click.<br><br>
-Not every program works. Games with anti-cheat usually do not." || exit 0
-  rm -f /run/rustos-gaming.status
-  konsole --nofork --title "Windows program support" -e bash -c \
-    'sudo /usr/local/bin/rustos-gaming --install wine; echo; read -r -p "Press Enter to close this window. " _'
-  if [ "$(cat /run/rustos-gaming.status 2>/dev/null)" != ok ] || ! command -v wine >/dev/null 2>&1; then
-    kdialog --title "$T" --icon rustos --sorry "Windows program support was not installed.<br>Scroll the terminal window for the first error, or try again."
-    exit 1
-  fi
+# warn about things that are known not to work well (the person can still run it)
+known_problem() {
+  local base dir
+  base=$(basename -- "$f"); base=${base,,}; dir=$(dirname -- "$f")
+  case "$base" in
+    *officesetup*|*office365*|*microsoft365*|*microsoft-365*|*o365*)
+      echo "Microsoft Office does not run well under Wine. LibreOffice, or Microsoft 365 in the browser, works better."; return 0 ;;
+    *photoshop*|*creativecloud*|*illustrator*|*lightroom*|*premiere*|*aftereffects*|*acrobat*)
+      echo "Adobe programs usually do not run under Wine. GIMP, Krita, Inkscape and Kdenlive are the alternatives."; return 0 ;;
+  esac
+  # look for anti-cheat in the game's folder or one or two folders above it (not in big shared folders)
+  local d="$dir"
+  for _ in 1 2 3; do
+    case "$d" in "$HOME"|"$HOME"/Downloads|"$HOME"/Desktop|"$HOME"/Documents|/|/tmp|.) break ;; esac
+    if find "$d" -maxdepth 2 \( -iname 'EasyAntiCheat*' -o -iname 'BEService*' -o -iname 'BattlEye*' -o -iname 'vgc.exe' \
+         -o -iname 'EAAntiCheat*' -o -iname 'xigncode*' -o -iname 'FACEIT*' \) -print -quit 2>/dev/null | grep -q .; then
+      echo "This game has anti-cheat software. Online play often does not work on Linux unless the game's makers allow it."
+      return 0
+    fi
+    d=$(dirname -- "$d")
+  done
+  return 1
+}
+
+if [ "${RUSTOS_NOWARN:-0}" != 1 ] && hint=$(known_problem); then
+  kdialog --title "$T" --icon rustos --warningcontinuecancel \
+    "<b>This one may not work.</b><br><br>$hint<br><br>You can still try it. Nothing is harmed if it fails." || exit 0
 fi
 
-[ -d "$HOME/.wine" ] || kdialog --title "$T" --passivepopup "Setting up the Windows environment. This only happens the first time and can take a minute." 8 2>/dev/null
+ensure_wine || exit 1
+prepare_prefix
 
 cd "$(dirname "$f")" || true
 export WINEDEBUG=-all
@@ -47,5 +95,6 @@ fi
 case "${f,,}" in
   *.msi)        exec "${launch[@]}" msiexec /i "$f" ;;
   *.bat|*.cmd)  exec "${launch[@]}" cmd /c "$f" ;;
+  *.lnk)        exec "${launch[@]}" start /unix "$f" ;;
   *)            exec "${launch[@]}" "$f" ;;
 esac

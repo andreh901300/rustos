@@ -4,3 +4,4 @@ application/vnd.microsoft.portable-executable=rustos-exe.desktop
 application/x-msdownload=rustos-exe.desktop
 application/x-msi=rustos-exe.desktop
 application/x-ms-installer=rustos-exe.desktop
+application/x-ms-shortcut=rustos-exe.desktop

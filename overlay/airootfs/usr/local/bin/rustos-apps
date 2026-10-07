@@ -104,7 +104,7 @@ if [ "${#items[@]}" -gt 0 ]; then
     'sudo /usr/local/bin/rustos-apps --install "$@"; echo; read -r -p "Press Enter to close this window. " _' _ "${items[@]}"
   if [ "$(cat /run/rustos-apps.status 2>/dev/null)" = ok ]; then
     msg="<b>Done!</b> Find your new apps in the menu."
-    case " ${items[*]} " in *" windows "*) msg="$msg<br><br>To run a Windows program, double-click its .exe file. Right-click it and choose <b>Run as game</b> for games." ;; esac
+    case " ${items[*]} " in *" windows "*) msg="$msg<br><br>To run a Windows program, double-click its .exe file. Right-click it and choose <b>Run as game</b> for games.<br>Open <b>Windows App Support</b> in the menu to install and manage Windows programs." ;; esac
     case " ${items[*]} " in *" print "*) msg="$msg<br><br>Add your printer in System Settings, Printers." ;; esac
     kdialog --title "$T" --icon rustos --msgbox "$msg"
   else

@@ -46,7 +46,10 @@ if [ "${1:-}" = --install ]; then
   has steam  && pkgs+=(steam)
   has tools  && pkgs+=(gamemode lib32-gamemode mangohud lib32-mangohud gamescope)
   has lutris && pkgs+=(lutris wine winetricks)
-  has wine   && pkgs+=(wine wine-mono wine-gecko winetricks vkd3d lib32-vkd3d)
+  has wine   && pkgs+=(wine wine-mono wine-gecko winetricks cabextract p7zip vkd3d lib32-vkd3d
+                       gnutls lib32-gnutls giflib lib32-giflib libpulse lib32-libpulse alsa-plugins lib32-alsa-plugins
+                       openal lib32-openal gst-plugins-base gst-plugins-good gst-libav
+                       lib32-gst-plugins-base lib32-gst-plugins-good cups)
 
   # only ask for packages that exist (a wrong name must not break the whole thing)
   ok=()

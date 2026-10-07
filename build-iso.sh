@@ -100,6 +100,7 @@ file_permissions+=(
   ["/usr/local/bin/rustos-switch"]="0:0:755"
   ["/usr/local/bin/rustos-education"]="0:0:755"
   ["/usr/local/bin/rustos-antivirus"]="0:0:755"
+  ["/usr/local/bin/rustos-windows"]="0:0:755"
   ["/usr/share/kio/servicemenus/rustos-scan-virus.desktop"]="0:0:755"
   ["/usr/share/kio/servicemenus/rustos-run-game.desktop"]="0:0:755"
   ["/etc/sudoers.d/10-wheel"]="0:0:440"
