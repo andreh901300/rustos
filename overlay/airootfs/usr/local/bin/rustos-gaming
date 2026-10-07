@@ -46,6 +46,7 @@ if [ "${1:-}" = --install ]; then
   has steam  && pkgs+=(steam)
   has tools  && pkgs+=(gamemode lib32-gamemode mangohud lib32-mangohud gamescope)
   has lutris && pkgs+=(lutris wine winetricks)
+  has wine   && pkgs+=(wine wine-mono wine-gecko winetricks vkd3d lib32-vkd3d)
 
   # only ask for packages that exist (a wrong name must not break the whole thing)
   ok=()
@@ -102,13 +103,16 @@ mapfile -t picked < <(kdialog --title "$T" --icon rustos --separate-output --che
   "Pick what you want. Everything is optional."$'\n'"Graphics card: ${gpuname:-not found}" \
   steam    "Steam (plays Windows games with Proton)" on \
   tools    "Performance tools: GameMode, MangoHud overlay, Gamescope" on \
+  wine     "Windows programs: run .exe files with Wine" off \
   lutris   "Lutris + Wine (other Windows game launchers)" off \
   heroic   "Heroic Games Launcher (Epic, GOG, Amazon)" off \
   protonup "ProtonUp-Qt (download GE-Proton for more games)" off \
   discord  "Discord" off) || exit 0
 [ "${#picked[@]}" -gt 0 ] || exit 0
 
-if grep -q '\[10de:' <<<"$gpus"; then
+if pacman -Q nvidia-open >/dev/null 2>&1; then
+  picked+=(nvidia)                      # already chosen in the installer: keep the matching 32-bit parts
+elif grep -q '\[10de:' <<<"$gpus"; then
   if kdialog --title "$T" --icon rustos --yes-label "Yes (RTX, or GTX 16 series, or newer)" --no-label "No / not sure" --yesno \
     "An NVIDIA graphics card was found.<br><br>Is it a GeForce <b>RTX</b>, a <b>GTX 16</b> series, or newer?<br><br>The NVIDIA driver RustOS installs only supports those. On an older card (GTX 10 series or older) choose No and the built-in driver is used."; then
     picked+=(nvidia)
@@ -126,7 +130,7 @@ if [ "$(cat /run/rustos-gaming.status 2>/dev/null)" = ok ]; then
   extra=""
   case " ${picked[*]} " in *" nvidia "*) extra="<br><br><b>Restart your computer</b> once so the NVIDIA driver is used." ;; esac
   kdialog --title "$T" --icon rustos --msgbox \
-    "<b>Gaming setup finished!</b>$extra<br><br>In Steam: right-click a game, Properties, Launch Options, and type:<br><tt>gamemoderun mangohud %command%</tt><br>That turns on GameMode and the performance overlay.<br><br>For games that need it, use Properties, Compatibility, and tick a Proton version."
+    "<b>Gaming setup finished!</b>$extra<br><br>In Steam: right-click a game, Properties, Launch Options, and type:<br><tt>gamemoderun mangohud %command%</tt><br>That turns on GameMode and the performance overlay.<br><br>For games that need it, use Properties, Compatibility, and tick a Proton version.<br><br>Windows games outside Steam: right-click the .exe and choose <b>Run as game</b>."
 else
   kdialog --title "$T" --icon rustos --sorry \
     "The setup did not finish. Scroll the terminal window for the first error, or run it again from the menu."

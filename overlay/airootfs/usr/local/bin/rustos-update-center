@@ -59,18 +59,31 @@ show_log() {
 while true; do
   state=OFF; other=ON
   if systemctl is-enabled --quiet rustos-update.timer 2>/dev/null; then state=ON; other=OFF; fi
+  held=""
+  if [ -r /var/lib/rustos/update-hold ] && [ "$(date +%s)" -lt "$(cat /var/lib/rustos/update-hold)" ]; then
+    held=$(date -d "@$(cat /var/lib/rustos/update-hold)" '+%a %d %b')
+  fi
   last=$(grep '^===' /var/log/rustos-update.log 2>/dev/null | tail -n 1 | tr -d '=' | sed 's/^ *//; s/ *$//')
+  menu=(check "Check for updates and install"
+        new   "What's new in RustOS"
+        undo  "Undo the last update (go back to older versions)")
+  [ -n "$held" ] && menu+=(resume "Resume automatic updates now")
+  menu+=(auto  "Turn automatic updates $other"
+         apps  "Apps and Windows programs (office, video, printing, .exe support)"
+         edu   "Education Center (PDF tools, Canva, study apps)"
+         games "Gaming setup (Steam, drivers, performance tools)"
+         log   "Update history")
   choice=$(kdialog --title "$T" --icon rustos \
-    --menu "RustOS $(current_version)"$'\n'"Automatic updates: $state"$'\n'"Last automatic update: ${last:-never}" \
-      check "Check for updates and install" \
-      new   "What's new in RustOS" \
-      auto  "Turn automatic updates $other" \
-      games "Gaming setup (Steam, drivers, performance tools)" \
-      log   "Update history") || exit 0
+    --menu "RustOS $(current_version)"$'\n'"Automatic updates: $state${held:+ (paused until $held)}"$'\n'"Last automatic update: ${last:-never}" \
+    "${menu[@]}") || exit 0
   case "$choice" in
     check) check_updates ;;
     new)   whatsnew ;;
     auto)  pkexec /usr/local/bin/rustos-autoupdate "$(echo "$other" | tr 'A-Z' 'a-z')" >/dev/null 2>&1 ;;
+    undo)   /usr/local/bin/rustos-rollback ;;
+    resume) pkexec /usr/local/bin/rustos-autoupdate resume >/dev/null 2>&1 ;;
+    apps)   /usr/local/bin/rustos-apps ;;
+    edu)    /usr/local/bin/rustos-education ;;
     games) /usr/local/bin/rustos-gaming ;;
     log)   show_log ;;
   esac

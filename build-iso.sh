@@ -93,6 +93,13 @@ file_permissions+=(
   ["/usr/local/bin/rustos-update-notify"]="0:0:755"
   ["/usr/local/bin/rustos-update-center"]="0:0:755"
   ["/usr/local/bin/rustos-gaming"]="0:0:755"
+  ["/usr/local/bin/rustos-restorepoint"]="0:0:755"
+  ["/usr/local/bin/rustos-rollback"]="0:0:755"
+  ["/usr/local/bin/rustos-run-exe"]="0:0:755"
+  ["/usr/local/bin/rustos-apps"]="0:0:755"
+  ["/usr/local/bin/rustos-switch"]="0:0:755"
+  ["/usr/local/bin/rustos-education"]="0:0:755"
+  ["/usr/share/kio/servicemenus/rustos-run-game.desktop"]="0:0:755"
   ["/etc/sudoers.d/10-wheel"]="0:0:440"
   ["/etc/skel/Desktop/install-rustos.desktop"]="0:0:755"
 )

@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Runs a Windows program (.exe, .msi, .bat) with Wine. Double-click a .exe and this opens it.
+#   rustos-run-exe file.exe          run it
+#   rustos-run-exe --game file.exe   run it with GameMode and the MangoHud overlay
+#   rustos-run-exe                   pick a file first
+# If Wine is not installed yet, it offers to install it (once).
+T="Windows programs"
+
+game=0
+if [ "${1:-}" = --game ]; then game=1; shift; fi
+f="${1:-}"
+
+if [ -z "$f" ]; then
+  f=$(kdialog --title "$T" --icon rustos --getopenfilename "$HOME" "*.exe *.EXE *.msi *.MSI *.bat *.BAT|Windows programs") || exit 0
+fi
+[ -e "$f" ] || { kdialog --title "$T" --icon rustos --error "That file was not found:<br>$f"; exit 1; }
+
+if ! command -v wine >/dev/null 2>&1; then
+  if [ -d /run/archiso ]; then
+    kdialog --title "$T" --icon rustos --msgbox "Windows programs can be run after RustOS is installed on this PC."
+    exit 1
+  fi
+  kdialog --title "$T" --icon rustos --yes-label "Install support" --no-label "Cancel" --yesno \
+"<b>This is a Windows program.</b><br><br>
+RustOS runs many Windows programs and games with <b>Wine</b>. It is not installed yet.<br><br>
+Install it now? It downloads a few hundred MB and asks for your password. After that, every .exe opens with a double-click.<br><br>
+Not every program works. Games with anti-cheat usually do not." || exit 0
+  rm -f /run/rustos-gaming.status
+  konsole --nofork --title "Windows program support" -e bash -c \
+    'sudo /usr/local/bin/rustos-gaming --install wine; echo; read -r -p "Press Enter to close this window. " _'
+  if [ "$(cat /run/rustos-gaming.status 2>/dev/null)" != ok ] || ! command -v wine >/dev/null 2>&1; then
+    kdialog --title "$T" --icon rustos --sorry "Windows program support was not installed.<br>Scroll the terminal window for the first error, or try again."
+    exit 1
+  fi
+fi
+
+[ -d "$HOME/.wine" ] || kdialog --title "$T" --passivepopup "Setting up the Windows environment. This only happens the first time and can take a minute." 8 2>/dev/null
+
+cd "$(dirname "$f")" || true
+export WINEDEBUG=-all
+launch=(wine)
+if [ "$game" = 1 ]; then
+  command -v gamemoderun >/dev/null 2>&1 && launch=(gamemoderun "${launch[@]}")
+  command -v mangohud >/dev/null 2>&1 && launch=(mangohud "${launch[@]}")
+fi
+
+case "${f,,}" in
+  *.msi)        exec "${launch[@]}" msiexec /i "$f" ;;
+  *.bat|*.cmd)  exec "${launch[@]}" cmd /c "$f" ;;
+  *)            exec "${launch[@]}" "$f" ;;
+esac

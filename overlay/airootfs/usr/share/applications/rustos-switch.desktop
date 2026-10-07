@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Switching from Windows
+Comment=Open your Windows files, run .exe programs, find app replacements
+Exec=/usr/local/bin/rustos-switch
+Icon=rustos
+Terminal=false
+Categories=System;Utility;

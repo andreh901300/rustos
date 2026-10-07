@@ -52,6 +52,7 @@ vulkan-intel
 xorg-xwayland
 
 # --- Windows disks ---
+udisks2
 ntfs-3g
 exfatprogs
 dosfstools

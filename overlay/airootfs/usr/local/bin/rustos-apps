@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# RustOS Apps: pick the extra programs you want. RustOS stays light because none of these are installed by default.
+# Start it from the app menu ("RustOS Apps") or run:  rustos-apps
+# Part 1 (you, in a window): asks what you want.  Part 2 (root, in a terminal window): installs it.
+
+# ============================================================== part 2 (root)
+if [ "${1:-}" = --install ]; then
+  shift
+  [ "$(id -u)" = 0 ] || exec sudo "$0" --install "$@"
+  rm -f /run/rustos-apps.status
+  want=" $* "
+  has() { case "$want" in *" $1 "*) return 0 ;; esac; return 1; }
+  fail() { echo; echo "Something went wrong: $1"; echo failed > /run/rustos-apps.status; exit 1; }
+
+  echo "== Updating the package list"
+  pacman -Sy --noconfirm || fail "could not reach the package servers. Are you online?"
+
+  pkgs=()
+  svcs=()
+  lang=${LANG%%.*}                       # de_DE
+  case "$lang" in
+    en_US|C|POSIX|"") lo="" ;;
+    pt_BR) lo=pt-br ;;
+    zh_CN) lo=zh-cn ;;
+    en_GB) lo=en-gb ;;
+    *)     lo=${lang%%_*} ;;
+  esac
+  if has office; then
+    pkgs+=(libreoffice-fresh)
+    [ -n "$lo" ] && pkgs+=("libreoffice-fresh-$lo")
+  fi
+  has media && pkgs+=(vlc vlc-plugins-all)
+  if has print; then
+    pkgs+=(cups cups-filters cups-pdf print-manager hplip sane sane-airscan simple-scan avahi)
+    svcs+=(cups.socket cups-browsed.service avahi-daemon.service)
+  fi
+  has gimp && pkgs+=(gimp)
+  has mail && pkgs+=(thunderbird)
+  has obs  && pkgs+=(obs-studio)
+
+  if [ "${#pkgs[@]}" -gt 0 ]; then
+    ok=()
+    for p in "${pkgs[@]}"; do
+      if pacman -Si "$p" >/dev/null 2>&1; then ok+=("$p"); else echo "  (skipping $p - not in the repositories)"; fi
+    done
+    echo "== Installing: ${ok[*]}"
+    pacman -Su --noconfirm --needed "${ok[@]}" || fail "the package install failed (see the lines above)."
+    for s in "${svcs[@]}"; do systemctl enable "$s" >/dev/null 2>&1 || true; done
+  fi
+
+  if has windows; then
+    echo "== Windows program support (Wine)"
+    /usr/local/bin/rustos-gaming --install wine || fail "Windows program support could not be installed."
+  fi
+
+  if has bottles; then
+    echo "== Bottles (Flatpak)"
+    if ! command -v flatpak >/dev/null 2>&1; then pacman -S --noconfirm --needed flatpak || fail "flatpak is missing."; fi
+    flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
+    flatpak install -y --noninteractive flathub com.usebottles.bottles || echo "  (could not install Bottles - try again later from Discover)"
+  fi
+
+  echo ok > /run/rustos-apps.status
+  echo
+  echo "All done."
+  exit 0
+fi
+
+# ============================================================== part 1 (you)
+T="RustOS Apps"
+if [ -d /run/archiso ]; then
+  kdialog --title "$T" --icon rustos --msgbox "Apps can be added after RustOS is installed.<br>Install it first, then open this again."
+  exit 0
+fi
+
+mapfile -t picked < <(kdialog --title "$T" --icon rustos --separate-output --checklist \
+  "Pick what you want. RustOS stays light because none of this is installed by default."$'\n'"You need an internet connection." \
+  office  "Office: LibreOffice (documents, spreadsheets, slides)" on \
+  media   "Video and music player: VLC" on \
+  windows "Windows programs: run .exe files with a double-click (Wine)" on \
+  print   "Printing and scanning" off \
+  gimp    "Image editor: GIMP" off \
+  mail    "Email: Thunderbird" off \
+  obs     "Screen recording and streaming: OBS Studio" off \
+  bottles "Bottles: manage Windows programs in a window (Flatpak)" off \
+  edu     "Education Center: PDF tools, Canva and study apps" off \
+  games   "Gaming setup: Steam, graphics driver, performance tools" off) || exit 0
+[ "${#picked[@]}" -gt 0 ] || exit 0
+
+games=0; edu=0; items=()
+for i in "${picked[@]}"; do
+  case "$i" in
+    games) games=1 ;;
+    edu)   edu=1 ;;
+    *)     items+=("$i") ;;
+  esac
+done
+
+if [ "${#items[@]}" -gt 0 ]; then
+  kdialog --title "$T" --icon rustos --yes-label "Install" --no-label "Cancel" --yesno \
+    "Ready to install.<br>A terminal window shows the progress and asks for your password. It can take a while for big apps like LibreOffice." || exit 0
+  rm -f /run/rustos-apps.status
+  konsole --nofork --title "RustOS Apps" -e bash -c \
+    'sudo /usr/local/bin/rustos-apps --install "$@"; echo; read -r -p "Press Enter to close this window. " _' _ "${items[@]}"
+  if [ "$(cat /run/rustos-apps.status 2>/dev/null)" = ok ]; then
+    msg="<b>Done!</b> Find your new apps in the menu."
+    case " ${items[*]} " in *" windows "*) msg="$msg<br><br>To run a Windows program, double-click its .exe file. Right-click it and choose <b>Run as game</b> for games." ;; esac
+    case " ${items[*]} " in *" print "*) msg="$msg<br><br>Add your printer in System Settings, Printers." ;; esac
+    kdialog --title "$T" --icon rustos --msgbox "$msg"
+  else
+    kdialog --title "$T" --icon rustos --sorry "Not everything was installed. Scroll the terminal window for the first error, or run RustOS Apps again."
+  fi
+fi
+
+[ "$edu" = 1 ] && /usr/local/bin/rustos-education
+[ "$games" = 1 ] && exec /usr/local/bin/rustos-gaming
+exit 0

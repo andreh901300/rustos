@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Windows Program (Wine)
+Comment=Run Windows programs and games
+Exec=/usr/local/bin/rustos-run-exe %f
+Icon=application-x-ms-dos-executable
+Terminal=false
+NoDisplay=true
+MimeType=application/x-ms-dos-executable;application/vnd.microsoft.portable-executable;application/x-msdownload;application/x-msi;application/x-ms-installer;
+Categories=Utility;

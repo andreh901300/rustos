@@ -36,6 +36,15 @@ on_ac() {    # true on desktops/VMs (no battery) and laptops that are plugged in
   [ "$any" = 0 ] || [ "$ac" = 1 ]
 }
 
+HOLD=/var/lib/rustos/update-hold
+if [ "${1:-}" != "--now" ]; then
+  if [ -r "$HOLD" ] && [ "$(date +%s)" -lt "$(cat "$HOLD")" ]; then
+    echo "Updates are paused (after an undo) - skipping."
+    exit 0
+  fi
+else
+  rm -f "$HOLD"
+fi
 if [ "${1:-}" != "--now" ]; then
   on_ac || { echo "Running on battery - skipping."; exit 0; }
 fi

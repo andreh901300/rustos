@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=RustOS Education Center
+Comment=PDF tools, Canva, study and school apps
+Exec=/usr/local/bin/rustos-education
+Icon=rustos
+Terminal=false
+Categories=Education;System;

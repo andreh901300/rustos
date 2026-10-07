@@ -1,0 +1,9 @@
+[Trigger]
+Operation = Upgrade
+Type = Package
+Target = *
+
+[Action]
+Description = Saving a restore point (so this update can be undone)...
+When = PreTransaction
+Exec = /usr/local/bin/rustos-restorepoint

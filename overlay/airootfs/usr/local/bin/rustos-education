@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# RustOS Education Center: PDF tools, study and school apps, and shortcuts to web apps like Canva.
+# Start it from the app menu ("RustOS Education Center") or run:  rustos-education
+# Web apps (Canva, Google Docs...) have no Linux program, so they get a menu shortcut that opens them in the browser.
+# Part 1 (you, in a window): asks what you want.  Part 2 (root, in a terminal window): installs the programs.
+
+# ============================================================== part 2 (root)
+if [ "${1:-}" = --install ]; then
+  shift
+  [ "$(id -u)" = 0 ] || exec sudo "$0" --install "$@"
+  rm -f /run/rustos-education.status
+  want=" $* "
+  has() { case "$want" in *" $1 "*) return 0 ;; esac; return 1; }
+  fail() { echo; echo "Something went wrong: $1"; echo failed > /run/rustos-education.status; exit 1; }
+
+  echo "== Updating the package list"
+  pacman -Sy --noconfirm || fail "could not reach the package servers. Are you online?"
+
+  pkgs=()
+  has pdf     && pkgs+=(okular)
+  has pdfedit && pkgs+=(xournalpp pdfarranger)
+  has books   && pkgs+=(calibre)
+  has stars   && pkgs+=(stellarium)
+
+  if [ "${#pkgs[@]}" -gt 0 ]; then
+    ok=()
+    for p in "${pkgs[@]}"; do
+      if pacman -Si "$p" >/dev/null 2>&1; then ok+=("$p"); else echo "  (skipping $p - not in the repositories)"; fi
+    done
+    if [ "${#ok[@]}" -gt 0 ]; then
+      echo "== Installing: ${ok[*]}"
+      pacman -Su --noconfirm --needed "${ok[@]}" || fail "the package install failed (see the lines above)."
+    fi
+  fi
+
+  flat=()
+  has anki     && flat+=(net.ankiweb.Anki)
+  has zotero   && flat+=(org.zotero.Zotero)
+  has obsidian && flat+=(md.obsidian.Obsidian)
+  has scratch  && flat+=(edu.mit.Scratch)
+  has geogebra && flat+=(org.geogebra.GeoGebra)
+  has zoom     && flat+=(us.zoom.Zoom)
+  if [ "${#flat[@]}" -gt 0 ]; then
+    echo "== Installing Flatpak apps: ${flat[*]}"
+    if ! command -v flatpak >/dev/null 2>&1; then pacman -S --noconfirm --needed flatpak || fail "flatpak is missing."; fi
+    flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
+    bad=0
+    for id in "${flat[@]}"; do
+      flatpak install -y --noninteractive flathub "$id" || { echo "  (could not install $id - try again later from Discover)"; bad=1; }
+    done
+    [ "$bad" = 0 ] || fail "some apps could not be installed (see above)."
+  fi
+
+  echo ok > /run/rustos-education.status
+  echo
+  echo "All done."
+  exit 0
+fi
+
+# ============================================================== web app shortcuts (you, no password needed)
+webapp() { # webapp <id> <Name> <url> <icon>
+  local dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+  mkdir -p "$dir"
+  cat > "$dir/rustos-web-$1.desktop" <<DESK
+[Desktop Entry]
+Type=Application
+Name=$2
+Comment=$2 (opens in the browser)
+Exec=firefox --new-window $3
+Icon=$4
+Terminal=false
+Categories=Education;Network;
+DESK
+}
+
+# ============================================================== part 1 (you)
+T="RustOS Education Center"
+if [ -d /run/archiso ]; then
+  kdialog --title "$T" --icon rustos --msgbox "The Education Center works on the installed RustOS.<br>Install it first, then open this again."
+  exit 0
+fi
+
+mapfile -t picked < <(kdialog --title "$T" --icon rustos --separate-output --checklist \
+  "Pick what you want. None of this is installed by default, so RustOS stays light."$'\n'"Programs need an internet connection. Websites just add a menu shortcut." \
+  pdf       "PDF reader and notes: Okular" on \
+  pdfedit   "PDF tools: Xournal++ (write on PDFs, sign) and PDF Arranger (merge, split, reorder)" on \
+  canva     "Canva (website shortcut: Canva has no Linux program)" on \
+  gdocs     "Google Docs, Sheets and Slides (website shortcut)" off \
+  classroom "Google Classroom (website shortcut)" off \
+  m365      "Microsoft 365 online: Word, Excel, PowerPoint (website shortcut)" off \
+  khan      "Khan Academy (website shortcut)" off \
+  duolingo  "Duolingo, learn languages (website shortcut)" off \
+  books     "E-books: Calibre" off \
+  anki      "Flashcards: Anki" off \
+  zotero    "Research and references: Zotero" off \
+  obsidian  "Notes: Obsidian" off \
+  scratch   "Learn coding: Scratch" off \
+  geogebra  "Maths: GeoGebra" off \
+  stars     "Astronomy: Stellarium" off \
+  zoom      "Video lessons and meetings: Zoom" off) || exit 0
+[ "${#picked[@]}" -gt 0 ] || exit 0
+
+items=(); webs=()
+for i in "${picked[@]}"; do
+  case "$i" in
+    canva)     webapp canva "Canva" "https://www.canva.com" applications-graphics; webs+=(Canva) ;;
+    gdocs)     webapp gdocs "Google Docs" "https://docs.google.com" x-office-document; webs+=("Google Docs") ;;
+    classroom) webapp classroom "Google Classroom" "https://classroom.google.com" applications-education; webs+=("Google Classroom") ;;
+    m365)      webapp m365 "Microsoft 365 (online)" "https://www.office.com" x-office-document; webs+=("Microsoft 365") ;;
+    khan)      webapp khan "Khan Academy" "https://www.khanacademy.org" applications-education; webs+=("Khan Academy") ;;
+    duolingo)  webapp duolingo "Duolingo" "https://www.duolingo.com" applications-education; webs+=(Duolingo) ;;
+    *)         items+=("$i") ;;
+  esac
+done
+[ "${#webs[@]}" -gt 0 ] && command -v kbuildsycoca6 >/dev/null 2>&1 && kbuildsycoca6 >/dev/null 2>&1
+
+msg=""
+if [ "${#items[@]}" -gt 0 ]; then
+  kdialog --title "$T" --icon rustos --yes-label "Install" --no-label "Cancel" --yesno \
+    "Ready to install.<br>A terminal window shows the progress and asks for your password." || exit 0
+  rm -f /run/rustos-education.status
+  konsole --nofork --title "RustOS Education Center" -e bash -c \
+    'sudo /usr/local/bin/rustos-education --install "$@"; echo; read -r -p "Press Enter to close this window. " _' _ "${items[@]}"
+  if [ "$(cat /run/rustos-education.status 2>/dev/null)" = ok ]; then
+    msg="<b>Done!</b> Find your new programs in the menu."
+  else
+    kdialog --title "$T" --icon rustos --sorry "Not everything was installed. Scroll the terminal window for the first error, or run the Education Center again."
+  fi
+fi
+if [ "${#webs[@]}" -gt 0 ]; then
+  list=$(printf '%s, ' "${webs[@]}"); list=${list%, }
+  msg="${msg:+$msg<br><br>}<b>Added to the menu:</b> $list.<br>They open in the browser, so you need internet and your own account. To remove one, right-click it in the menu and choose Uninstall or Remove."
+fi
+[ -n "$msg" ] && kdialog --title "$T" --icon rustos --msgbox "$msg"
+exit 0

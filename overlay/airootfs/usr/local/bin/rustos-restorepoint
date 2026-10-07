@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# pacman hook (rustos-restorepoint.hook): runs BEFORE every package upgrade.
+# It saves the list of installed package versions as a "restore point", so an update can be undone
+# later with rustos-rollback (Update Center -> Undo the last update).
+[ -d /run/archiso ] && exit 0
+
+D=/var/lib/rustos/restorepoints
+mkdir -p "$D"
+
+# one update run can be several pacman steps (keyring first, then everything else):
+# keep only the first restore point of a run
+newest=$(ls -1t "$D"/*.list 2>/dev/null | head -n 1)
+if [ -n "$newest" ]; then
+  age=$(( $(date +%s) - $(stat -c %Y "$newest") ))
+  [ "$age" -lt 900 ] && exit 0
+fi
+
+f="$D/$(date +%Y%m%d-%H%M%S).list"
+if ! pacman -Q > "$f" 2>/dev/null; then rm -f "$f"; exit 0; fi
+
+# keep the newest 10
+ls -1t "$D"/*.list 2>/dev/null | tail -n +11 | while read -r old; do rm -f "$old"; done
+exit 0

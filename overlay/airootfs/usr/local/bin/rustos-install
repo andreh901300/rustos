@@ -122,6 +122,62 @@ else
 
 fi
 
+# --- 3c. Language and keyboard -----------------------------------------------
+LOCALE=$(kd --radiolist "Which language do you want RustOS in?" \
+  en_US.UTF-8 "English (United States)" on \
+  en_GB.UTF-8 "English (United Kingdom)" off \
+  ar_AE.UTF-8 "Arabic (United Arab Emirates)" off \
+  de_DE.UTF-8 "German - Deutsch" off \
+  fr_FR.UTF-8 "French - Francais" off \
+  es_ES.UTF-8 "Spanish - Espanol" off \
+  it_IT.UTF-8 "Italian - Italiano" off \
+  pt_BR.UTF-8 "Portuguese (Brazil)" off \
+  nl_NL.UTF-8 "Dutch - Nederlands" off \
+  pl_PL.UTF-8 "Polish - Polski" off \
+  ru_RU.UTF-8 "Russian" off \
+  tr_TR.UTF-8 "Turkish - Turkce" off \
+  ja_JP.UTF-8 "Japanese" off \
+  ko_KR.UTF-8 "Korean" off \
+  zh_CN.UTF-8 "Chinese (Simplified)" off) || exit 0
+
+# the keyboard that most people with that language use is pre-selected
+kbd_default="us|us"
+case "$LOCALE" in
+  en_GB*) kbd_default="gb|uk" ;;
+  ar_*)   kbd_default="us,ara|us" ;;
+  de_*)   kbd_default="de|de-latin1" ;;
+  fr_*)   kbd_default="fr|fr" ;;
+  es_*)   kbd_default="es|es" ;;
+  it_*)   kbd_default="it|it" ;;
+  pt_BR*) kbd_default="br|br-abnt2" ;;
+  pl_*)   kbd_default="pl|pl2" ;;
+  ru_*)   kbd_default="us,ru|ru" ;;
+  tr_*)   kbd_default="tr|trq" ;;
+esac
+kopts=(); kdesc=""
+while IFS='|' read -r kx kc kname; do
+  sel=off; [ "$kx|$kc" = "$kbd_default" ] && sel=on
+  kopts+=("$kx|$kc" "$kname" "$sel")
+done <<'KBDS'
+us|us|English (US)
+gb|uk|English (UK)
+us,ara|us|English (US) + Arabic (switch with Alt+Shift)
+ara|us|Arabic only
+de|de-latin1|German
+fr|fr|French
+es|es|Spanish
+it|it|Italian
+br|br-abnt2|Portuguese (Brazil)
+pt|pt-latin1|Portuguese (Portugal)
+pl|pl2|Polish
+us,ru|ru|English (US) + Russian (switch with Alt+Shift)
+tr|trq|Turkish
+KBDS
+KBD=$(kd --radiolist "Which keyboard do you have?<br>You can change this later in System Settings." "${kopts[@]}") || exit 0
+KBD_X=${KBD%%|*}
+KBD_CON=${KBD##*|}
+for ((i = 0; i < ${#kopts[@]}; i += 3)); do [ "${kopts[i]}" = "$KBD" ] && kdesc="${kopts[i+1]}"; done
+
 # --- 4. Account -------------------------------------------------------------
 FULLNAME=$(kd --inputbox "What's your name?" "") || exit 0
 FULLNAME=${FULLNAME//[:,<>&]/ }
@@ -141,6 +197,20 @@ done
 HASH=$(printf '%s' "$P1" | openssl passwd -6 -stdin)
 unset P1 P2
 
+# NVIDIA graphics card: offer the driver right away
+NVIDIA=0; HYBRID=0
+GPUS=$(lspci -nn 2>/dev/null | grep -Ei 'vga|3d controller|display controller' || true)
+if grep -q '\[10de:' <<<"$GPUS"; then
+  if kd --yes-label "Yes, install the driver" --no-label "No / not sure" --yesno \
+"An <b>NVIDIA</b> graphics card was found.<br><br>
+Is it a GeForce <b>RTX</b>, a <b>GTX 16</b> series, or newer?<br><br>
+If yes, RustOS installs the NVIDIA driver now so games and the desktop use the card.<br>
+On older cards (GTX 10 series or older) choose No and the built-in open driver is used."; then
+    NVIDIA=1
+    grep -q '\[\(8086\|1002\):' <<<"$GPUS" && HYBRID=1
+  fi
+fi
+
 # Time zone from your IP address (falls back to UTC)
 TZ_=$(curl -fs --max-time 5 https://ipapi.co/timezone 2>/dev/null || true)
 [ -f "/usr/share/zoneinfo/$TZ_" ] || TZ_=UTC
@@ -156,7 +226,9 @@ kd --yes-label "$BTN" --no-label "Cancel" --warningyesno \
 $WHERE<br>
 Account: $FULLNAME (login name: $RUSTOS_USER)<br>
 Boot loader: $BOOTLOADER<br>
-Time zone: $TZ_<br><br>
+Language: $LOCALE - Keyboard: $kdesc<br>
+Time zone: $TZ_<br>
+$([ "$NVIDIA" = 1 ] && echo "NVIDIA driver: will be installed<br>")<br>
 $WARN" || exit 0
 
 # --- 6. Hand over to the root part -----------------------------------------
@@ -175,6 +247,11 @@ sudo install -m 600 /dev/null "$CONF"
   printf 'ESP_PART=%q\n' "$ESP_PART"
   printf 'FSTYPE=%q\n' "$FSTYPE"
   printf 'HOST_=%q\n' "$HOST_"
+  printf 'LOCALE=%q\n' "$LOCALE"
+  printf 'KBD_X=%q\n' "$KBD_X"
+  printf 'KBD_CON=%q\n' "$KBD_CON"
+  printf 'NVIDIA=%q\n' "$NVIDIA"
+  printf 'HYBRID=%q\n' "$HYBRID"
 } | sudo tee "$CONF" >/dev/null
 
 konsole --nofork -e sudo /usr/local/bin/rustos-install-run "$CONF"

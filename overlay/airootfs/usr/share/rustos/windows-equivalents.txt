@@ -1,0 +1,39 @@
+FINDING A REPLACEMENT FOR A WINDOWS APP
+
+Programs that come with RustOS
+  File Explorer ........... Dolphin
+  Command Prompt, PowerShell, Windows Terminal ... Konsole
+  Notepad ................. Kate
+  Snipping Tool ........... Spectacle (Print Screen key)
+  Task Manager ............ System Monitor (Ctrl+Esc)
+  Disk Management ......... Partition Manager
+  Settings, Control Panel . System Settings
+  7-Zip, WinRAR ........... Ark
+  Photos app .............. Gwenview
+  Edge, Chrome ............ Firefox (Chrome and Chromium can be added from Discover)
+
+Easy to add (open RustOS Apps, or search in Discover)
+  Word, Excel, PowerPoint . LibreOffice (Writer, Calc, Impress), or Microsoft 365 in the browser
+  Windows Media Player .... VLC
+  Photoshop ............... GIMP or Krita
+  Illustrator ............. Inkscape
+  Premiere, Final Cut ..... Kdenlive (DaVinci Resolve also has a Linux download)
+  Notepad++ ............... Kate or Kwrite
+  Outlook ................. Thunderbird
+  OBS ..................... OBS Studio (works natively)
+  Spotify, Discord ........ Flatpak versions in Discover
+
+Games
+  Steam ................... Steam for Linux (RustOS Gaming Setup installs it)
+  Epic, GOG, Amazon ....... Heroic Games Launcher
+  Other Windows launchers . Lutris or Bottles
+  Windows games from a file . right-click the .exe and choose Run as game
+  Games with anti-cheat ... often do NOT work. Check protondb.com and areweanticheatyet.com first.
+
+Programs that do not run well
+  Microsoft Office (desktop), Adobe Creative Cloud (Photoshop, Premiere ...),
+  and some programs that need special Windows drivers. Use the replacements above
+  or the web versions.
+
+Running any .exe
+  Double-click it. RustOS runs it with Wine. Many programs work, not all.

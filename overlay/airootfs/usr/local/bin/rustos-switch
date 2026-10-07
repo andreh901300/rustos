@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Switching from Windows: open your Windows files, run .exe programs, find replacements for Windows apps.
+# Start it from the app menu ("Switching from Windows") or run:  rustos-switch
+T="Switching from Windows"
+EQ=/usr/share/rustos/windows-equivalents.txt
+
+windows_files() {
+  local args=() first=on name fs label size line mnt out
+  while read -r name fs label size; do
+    [ "$fs" = ntfs ] || continue
+    label=${label//_/ }
+    args+=("$name" "$size  ${label:-Windows drive}  ($name)" "$first"); first=off
+  done < <(lsblk -rnpo NAME,FSTYPE,LABEL,SIZE 2>/dev/null | sed 's/\\x20/_/g')
+  if [ "${#args[@]}" -eq 0 ]; then
+    kdialog --title "$T" --icon rustos --msgbox "<b>No Windows drives were found.</b><br>Only NTFS drives are listed. If your Windows disk is encrypted with BitLocker, turn BitLocker off in Windows first."
+    return
+  fi
+  line=$(kdialog --title "$T" --icon rustos --radiolist "Which Windows drive do you want to open?" "${args[@]}") || return
+  out=$(udisksctl mount -b "$line" 2>&1) || {
+    kdialog --title "$T" --icon rustos --sorry "Could not open $line.<br><br>$out<br><br>If it says the drive is in use or hibernated, Windows did not shut down fully (Fast Startup). In Windows hold <b>Shift</b> while clicking Shut down, or turn Fast Startup off."
+    return
+  }
+  mnt=$(printf '%s' "$out" | sed -n 's/.* at \(.*\)\.$/\1/p')
+  [ -n "$mnt" ] && xdg-open "$mnt" >/dev/null 2>&1
+}
+
+while true; do
+  choice=$(kdialog --title "$T" --icon rustos --menu "What do you want to do?" \
+    files "Open my Windows files" \
+    exe   "Run a Windows program (.exe)" \
+    find  "Find a replacement for a Windows app" \
+    apps  "Add apps: office, video, printing, gaming" \
+    edu   "Education Center: PDF tools, Canva, study apps" \
+    tips  "Good to know when you switch") || exit 0
+  case "$choice" in
+    files) windows_files ;;
+    exe)   /usr/local/bin/rustos-run-exe ;;
+    find)  kdialog --title "Windows app replacements" --icon rustos --textbox "$EQ" 760 560 ;;
+    apps)  /usr/local/bin/rustos-apps ;;
+    edu)   /usr/local/bin/rustos-education ;;
+    tips)  kdialog --title "$T" --icon rustos --msgbox \
+"<b>Good to know</b><br><br>
+&bull; The <b>Windows key</b> opens the menu. Alt+Tab switches windows like in Windows.<br>
+&bull; Install programs from <b>Discover</b> (the store icon), not from websites.<br>
+&bull; Updates happen by themselves. Open <b>RustOS Update Center</b> to look.<br>
+&bull; Games from Steam usually just work (Steam uses Proton). Games with anti-cheat often do not. Check <b>protondb.com</b> before you buy.<br>
+&bull; Microsoft Office and Adobe programs do not run well. LibreOffice, GIMP and the web versions replace most of what people use.<br>
+&bull; Your Windows drives show up in Dolphin. Use <b>Open my Windows files</b> here if they do not." ;;
+  esac
+done

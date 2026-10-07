@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# Undo an update: puts programs back to the versions they had before.  Start it from the Update Center.
+# It takes the old versions from the package cache on this PC, or from the Arch Linux Archive online.
+# Your files and settings are not touched. Only installed programs go back to older versions.
+D=/var/lib/rustos/restorepoints
+CACHE=/var/cache/pacman/pkg
+T="Undo an update"
+
+# programs whose version differs now: prints "name oldversion newversion"
+changed_list() {
+  LC_ALL=C join <(LC_ALL=C sort "$1") <(pacman -Q | LC_ALL=C sort) | awk '$2 != $3 {print $1, $2, $3}'
+}
+
+# ============================================================ part 2 (root, in a terminal window)
+if [ "${1:-}" = --apply ]; then
+  f=$(realpath -e "${2:-}" 2>/dev/null) || { echo "Restore point not found."; exit 1; }
+  case "$f" in "$D"/*.list) ;; *) echo "Not a restore point."; exit 1 ;; esac
+  [ "$(id -u)" = 0 ] || exec sudo "$0" --apply "$f"
+  rm -f /run/rustos-rollback.status
+  fail() { echo; echo "$1"; echo FAIL > /run/rustos-rollback.status; exit 1; }
+  [ -e /var/lib/pacman/db.lck ] && fail "pacman is busy (an update may be running). Wait a few minutes and try again."
+
+  mapfile -t CH < <(changed_list "$f")
+  [ "${#CH[@]}" -gt 0 ] || fail "Nothing to undo: no program has changed since this restore point."
+
+  targets=(); missing=(); skipped=0
+  echo "Looking for the old versions of ${#CH[@]} programs..."
+  for line in "${CH[@]}"; do
+    read -r n ov _ <<<"$line"
+    found=""
+    for c in "$CACHE/$n-$ov-"*.pkg.tar.*; do
+      [ -e "$c" ] || continue
+      case "$c" in *.sig) continue ;; esac
+      rest=${c##*/}; rest=${rest#"$n-$ov-"}
+      case "$rest" in *-*) continue ;; esac      # must be only "arch.pkg.tar.xx"
+      found=$c; break
+    done
+    if [ -z "$found" ]; then
+      arch=$(pacman -Qi "$n" 2>/dev/null | awk '/^Architecture/{print $3}')
+      ovu=${ov//:/%3A}
+      for a in "${arch:-x86_64}" x86_64 any; do
+        url="https://archive.archlinux.org/packages/${n:0:1}/$n/$n-$ovu-$a.pkg.tar.zst"
+        if curl -fsI --max-time 15 "$url" >/dev/null 2>&1; then found=$url; break; fi
+      done
+    fi
+    if [ -n "$found" ]; then
+      targets+=("$found")
+    elif pacman -Si "$n" 2>/dev/null | grep -q '^Repository *: rustos'; then
+      skipped=$((skipped + 1))                    # RustOS' own package is only on our repository
+    else
+      missing+=("$n $ov")
+    fi
+  done
+
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo
+    echo "These old versions could not be found (not on this PC and not in the online archive):"
+    printf '  %s\n' "${missing[@]}"
+    fail "Undo stopped, nothing was changed. A half undo could leave the system mixed up."
+  fi
+  [ "${#targets[@]}" -gt 0 ] || fail "Nothing to install."
+
+  echo "Going back to the old versions (${#targets[@]} programs)..."
+  pacman -U --noconfirm "${targets[@]}" || fail "pacman could not finish the undo. Nothing else was changed."
+
+  # don't let the next automatic update undo the undo straight away
+  echo $(( $(date +%s) + 7 * 86400 )) > /var/lib/rustos/update-hold
+  echo OK > /run/rustos-rollback.status
+  echo
+  echo "Done. Automatic updates are paused for 7 days."
+  exit 0
+fi
+
+# ============================================================ part 1 (you, in windows)
+if [ -d /run/archiso ]; then
+  kdialog --title "$T" --icon rustos --msgbox "This is the live disk. There is nothing to undo here."
+  exit 0
+fi
+
+args=(); first=on
+mapfile -t files < <(ls -1t "$D"/*.list 2>/dev/null)
+for f in "${files[@]}"; do
+  n=$(changed_list "$f" | wc -l)
+  [ "$n" -gt 0 ] || continue
+  b=${f##*/}; b=${b%.list}
+  when=$(date -d "${b:0:8} ${b:9:2}:${b:11:2}:${b:13:2}" '+%a %d %b, %H:%M' 2>/dev/null || echo "$b")
+  args+=("$f" "Before the update of $when  ($n programs changed since)" "$first"); first=off
+done
+
+if [ "${#args[@]}" -eq 0 ]; then
+  kdialog --title "$T" --icon rustos --msgbox \
+    "<b>Nothing to undo.</b><br>No program has changed since the last restore point. Restore points are saved automatically before each update."
+  exit 0
+fi
+
+pick=$(kdialog --title "$T" --icon rustos --radiolist \
+  "Go back to how your programs were <b>before</b> an update.<br>Your files and settings stay as they are.<br><br>Choose a point in time:" "${args[@]}") || exit 0
+
+list=$(mktemp)
+{
+  echo "These programs will go back to their older version:"
+  echo
+  changed_list "$pick" | awk '{printf "  %-34s now %-22s  back to %s\n", $1, $3, $2}'
+} > "$list"
+kdialog --title "$T" --icon rustos --textbox "$list" 760 480
+rm -f "$list"
+
+kdialog --title "$T" --icon rustos --yes-label "Undo the update" --no-label "Cancel" --warningyesno \
+  "Go back to the older versions now?<br><br>It takes a few minutes. Automatic updates will be <b>paused for 7 days</b> so they do not undo this right away. You can resume them in the Update Center." || exit 0
+
+rm -f /run/rustos-rollback.status
+konsole --nofork --title "Undo an update" -e bash -c \
+  'sudo /usr/local/bin/rustos-rollback --apply "$1"; echo; read -r -p "Press Enter to close this window. " _' _ "$pick"
+
+if [ "$(cat /run/rustos-rollback.status 2>/dev/null)" = OK ]; then
+  kdialog --title "$T" --icon rustos --msgbox \
+    "<b>Done.</b> Your programs are back to the older versions.<br><br>Automatic updates are paused for 7 days. If the kernel went back, restart your PC."
+else
+  kdialog --title "$T" --icon rustos --sorry \
+    "The undo did not finish. Nothing was changed, or the terminal window shows why. Scroll up there for the first line that says what failed."
+fi
+exit 0

@@ -5,10 +5,15 @@ case "${1:-status}" in
   on)     systemctl enable --now rustos-update.timer && echo "Automatic updates are ON (daily, when online and plugged in)." ;;
   off)    systemctl disable --now rustos-update.timer && echo "Automatic updates are OFF." ;;
   now)    exec /usr/local/bin/rustos-update --now ;;
+  pause)  d=${2:-7}; echo $(( $(date +%s) + d * 86400 )) > /var/lib/rustos/update-hold && echo "Automatic updates are paused for $d days." ;;
+  resume) rm -f /var/lib/rustos/update-hold && echo "Automatic updates are running again." ;;
   log)    tail -n 40 /var/log/rustos-update.log ;;
   status)
     if systemctl is-enabled --quiet rustos-update.timer; then echo "Automatic updates: ON"; else echo "Automatic updates: OFF"; fi
     systemctl list-timers rustos-update.timer --no-pager 2>/dev/null | head -n 3
+    if [ -r /var/lib/rustos/update-hold ] && [ "$(date +%s)" -lt "$(cat /var/lib/rustos/update-hold)" ]; then
+      echo "Paused until: $(date -d "@$(cat /var/lib/rustos/update-hold)" '+%a %d %b %H:%M')  (rustos-autoupdate resume)"
+    fi
     echo "Last run:"; grep '^===' /var/log/rustos-update.log 2>/dev/null | tail -n 1 || echo "  never" ;;
-  *)      echo "Usage: rustos-autoupdate on | off | status | now | log"; exit 1 ;;
+  *)      echo "Usage: rustos-autoupdate on | off | status | now | log | pause [days] | resume"; exit 1 ;;
 esac

@@ -27,6 +27,11 @@ HOST_=${HOST_:-rustos}
 ROOT_PART=${ROOT_PART:-}
 ESP_PART=${ESP_PART:-}
 BOOTLOADER=${BOOTLOADER:-grub}
+LOCALE=${LOCALE:-en_US.UTF-8}
+KBD_X=${KBD_X:-us}
+KBD_CON=${KBD_CON:-us}
+NVIDIA=${NVIDIA:-0}
+HYBRID=${HYBRID:-0}
 # Dual boot / advanced: shared EFI partition -> GRUB only (it finds Windows and the other loaders won't fit a small ESP)
 SHARED_ESP=0
 if [ "$MODE" != whole ]; then BOOTLOADER=grub; SHARED_ESP=1; fi
@@ -138,6 +143,12 @@ if [ -r /usr/share/rustos/repo.conf ] && [ -r /usr/share/rustos/rustos-pub.gpg ]
     fi
   fi
 fi
+# --- extras chosen in the first part of the installer
+if [ "$NVIDIA" = 1 ]; then
+  PKGS+=(nvidia-open nvidia-utils nvidia-settings)
+  [ "$HYBRID" = 1 ] && PKGS+=(nvidia-prime)
+fi
+case "$LOCALE" in ja_*|ko_*|zh_*) PKGS+=(noto-fonts-cjk) ;; esac
 PSARGS=(-C "$PACCONF")
 [ "$USE_REPO" = 1 ] || PSARGS+=(-K)      # with the repo, the live keyring (incl. the RustOS key) is copied instead
 
@@ -175,7 +186,8 @@ else
   install -Dm644 /etc/systemd/system/rustos-update.service /mnt/etc/systemd/system/rustos-update.service
   install -Dm644 /etc/systemd/system/rustos-update.timer   /mnt/etc/systemd/system/rustos-update.timer
   install -Dm644 /etc/pacman.d/hooks/rustos-bootloader.hook /mnt/etc/pacman.d/hooks/rustos-bootloader.hook
-  for f in rustos-update-event rustos-update-notify rustos-update-center rustos-gaming; do
+  for f in rustos-update-event rustos-update-notify rustos-update-center rustos-gaming \
+           rustos-restorepoint rustos-rollback rustos-run-exe rustos-apps rustos-switch rustos-education; do
     install -Dm755 "/usr/local/bin/$f" "/mnt/usr/local/bin/$f"
   done
   for f in etc/pacman.d/hooks/rustos-update-event.hook \
@@ -183,7 +195,11 @@ else
            usr/share/applications/rustos-update-center.desktop usr/share/applications/rustos-gaming.desktop \
            etc/sysctl.d/99-rustos.conf etc/udev/rules.d/60-rustos-ioschedulers.rules \
            etc/systemd/journald.conf.d/rustos.conf etc/systemd/system.conf.d/rustos.conf \
-           etc/skel/.config/baloofilerc; do
+           etc/skel/.config/baloofilerc \
+           etc/pacman.d/hooks/rustos-restorepoint.hook etc/xdg/mimeapps.list \
+           usr/share/applications/rustos-exe.desktop usr/share/applications/rustos-apps.desktop \
+           usr/share/applications/rustos-switch.desktop usr/share/applications/rustos-education.desktop \
+           usr/share/kio/servicemenus/rustos-run-game.desktop; do
     install -Dm644 "/$f" "/mnt/$f"
   done
   mkdir -p /mnt/etc/systemd/user/default.target.wants /mnt/var/lib/rustos
@@ -201,15 +217,38 @@ zram-size = min(ram / 2, 8192)
 compression-algorithm = zstd
 EOF
 
+# Keyboard layout for the login screen (X11) and for Plasma (new users get it from /etc/skel)
+KBD_VARS=$(printf '%s' "$KBD_X" | sed 's/[^,]//g')
+KBD_OPTS=""; case "$KBD_X" in *,*) KBD_OPTS="grp:alt_shift_toggle" ;; esac
+mkdir -p /mnt/etc/X11/xorg.conf.d /mnt/etc/skel/.config
+cat > /mnt/etc/X11/xorg.conf.d/00-keyboard.conf <<EOF
+Section "InputClass"
+    Identifier "system-keyboard"
+    MatchIsKeyboard "on"
+    Option "XkbLayout" "$KBD_X"
+    Option "XkbOptions" "$KBD_OPTS"
+EndSection
+EOF
+cat > /mnt/etc/skel/.config/kxkbrc <<EOF
+[Layout]
+LayoutList=$KBD_X
+VariantList=$KBD_VARS
+Use=true
+ResetOldOptions=true
+Options=$KBD_OPTS
+EOF
+
 arch-chroot /mnt /usr/bin/env \
-  RU="$RUSTOS_USER" FN="${FULLNAME//[:,]/ }" PH="$PASSHASH" TZ_="$TZ_" HOST_="$HOST_" \
+  RU="$RUSTOS_USER" FN="${FULLNAME//[:,]/ }" PH="$PASSHASH" TZ_="$TZ_" HOST_="$HOST_" LOC="$LOCALE" KM="$KBD_CON" \
   bash -s <<'CHROOT'
 set -e
 ln -sf "/usr/share/zoneinfo/$TZ_" /etc/localtime
 hwclock --systohc 2>/dev/null || true
 sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' /etc/locale.gen
+sed -i "s/^#\(${LOC} UTF-8\)/\1/" /etc/locale.gen
 locale-gen
-echo "LANG=en_US.UTF-8" > /etc/locale.conf
+echo "LANG=$LOC" > /etc/locale.conf
+echo "KEYMAP=$KM" > /etc/vconsole.conf
 echo "$HOST_" > /etc/hostname
 printf '127.0.0.1 localhost\n::1 localhost\n127.0.1.1 %s\n' "$HOST_" > /etc/hosts
 

@@ -113,12 +113,12 @@ without reinstalling. One-time setup: **GITHUB-SETUP.md**. Then each release is 
 ## What users see when you release a new version
 
 After any update (the daily one, Discover, or a manual `pacman -Syu`) a popup appears:
-**"RustOS updated to 1.1"** with the top 3 lines of your change list, a **What's new** button and, if the
+**"RustOS updated to 2.2"** with the top 3 lines of your change list, a **What's new** button and, if the
 kernel changed, a **Restart now** button. If the PC was off or the user logged out, the popup shows at the
 next login. It only shows once per update.
 
-Where the text comes from: `CHANGELOG.txt`. **publish.bat asks "What did you change?" and adds that line
-for you.** It also asks for a new version number: type one (like `1.2`) for a big release, or press Enter.
+Where the text comes from: `CHANGELOG.txt`. **publish.bat asks for a one-line message (optional: press Enter to skip) and adds
+that line for you.** It also asks for a new version number: type one (like `2.3`) for a big release, or press Enter.
 
 The **RustOS Update Center** (app menu) shows the current version, checks for updates, installs them in a
 terminal window you can watch, shows What's new and the update history, and turns automatic updates on/off.
@@ -136,6 +136,45 @@ support, picks the graphics driver (AMD and Intel use Mesa; NVIDIA RTX / GTX 16 
 older NVIDIA cards use the open Nouveau/NVK driver), and installs everything in one go. In Steam, set a
 game's launch options to `gamemoderun mangohud %command%`. It is optional on purpose, so RustOS stays light.
 Not useful inside Hyper-V (no real GPU there); it warns you.
+
+## Windows programs (.exe)
+
+Linux cannot run `.exe` files by itself, so RustOS runs them through **Wine** (and Steam's **Proton** for Steam games).
+Double-click an `.exe` or `.msi` and `rustos-run-exe` runs it; the first time it offers to install Wine
+(`rustos-gaming --install wine`). Right-click an `.exe` -> **Run as game** starts it with GameMode and the MangoHud overlay.
+Honest limits: many programs and games work, some don't. Games with kernel anti-cheat (some online shooters) usually
+won't run, and Microsoft Office / Adobe apps are poor under Wine. Use LibreOffice, GIMP, etc. instead
+(**Switching from Windows** shows replacements). Bottles (Flatpak) is available in **RustOS Apps** if you want a window to manage Windows programs.
+
+## Education Center
+
+Menu -> **RustOS Education Center** (also offered in **RustOS Apps** and the Update Center). Tick what you want:
+**PDF**: Okular (read and annotate), Xournal++ (write on and sign PDFs), PDF Arranger (merge, split, reorder).
+**Website shortcuts**: Canva, Google Docs, Google Classroom, Microsoft 365 online, Khan Academy, Duolingo. These have no
+Linux program, so RustOS adds a menu entry that opens the site in Firefox (needs internet and your own account).
+**Study apps**: Calibre, Anki, Zotero, Obsidian, Scratch, GeoGebra, Stellarium, Zoom. Nothing is installed by default.
+Flatpak IDs and some package names are unverified on a real install; missing ones are skipped with a message.
+
+## Undo an update
+
+Before every update RustOS saves a list of the installed packages (`/var/lib/rustos/restorepoints`, newest 10).
+**Update Center -> Undo the last update** (or `rustos-rollback`) lists what would change and goes back to those
+versions using the pacman cache or the Arch archive, then pauses automatic updates for 7 days
+(`rustos-autoupdate resume` or **Update Center -> Resume** to end the pause). It restores programs, not your
+files or settings, and it needs internet if the old packages are no longer cached.
+
+## Installer choices
+
+Besides the account, disk and boot loader the installer now asks for your **language** and **keyboard layout**,
+and whether to install the **NVIDIA driver** (RTX / GTX 16 series or newer). Installer changes live on the ISO,
+so run `build.bat` again to get them in a fresh install.
+
+## Apps and switching from Windows
+
+At first login RustOS offers **RustOS Apps** (also in the menu): Office (LibreOffice), VLC, Windows program support,
+printing/scanning, GIMP, Thunderbird, OBS, Bottles and the gaming setup. Nothing is installed by default, so RustOS stays light.
+**Switching from Windows** (menu) opens your Windows drives and files, runs an `.exe`, and lists replacement apps
+(`usr/share/rustos/windows-equivalents.txt`).
 
 ## Lightweight
 

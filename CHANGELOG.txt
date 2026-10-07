@@ -1,8 +1,22 @@
 RustOS change list. Newest on top. Installed systems show this in "What's new" after an update.
 Each "== RustOS x.y ==" line starts a version. publish.bat adds a line under the newest version for you.
 
+== RustOS 2.2 ==
+- 2.2
+
+== RustOS 2.2 ==
+- Windows programs: double-click an .exe or .msi and RustOS runs it with Wine (it offers to install Wine the first time)
+- Right-click an .exe, choose "Run as game" for GameMode and the MangoHud overlay
+- Undo an update: RustOS saves a restore point before every update and the Update Center can go back to it
+- Installer: choose your language and keyboard layout
+- Installer: choose the NVIDIA driver while installing
+- First login: pick the apps you want (Office, VLC, printing, GIMP, OBS, Bottles, gaming)
+- New "Switching from Windows" helper: open your Windows files, run .exe files, find replacement apps
+- New Education Center: PDF reader and tools, shortcuts for Canva, Google Docs, Google Classroom, Microsoft 365, Khan Academy and Duolingo, plus Anki, Zotero, Obsidian, Scratch, GeoGebra, Calibre and more
+- publish.bat: the one-line message is now optional
+
 == RustOS 2.1 ==
-- alot
+- The RustOS update channel is online: updates come from GitHub and show a popup
 
 == RustOS 1.1 ==
 - Update popup after every update, with a What's new button and a Restart now button

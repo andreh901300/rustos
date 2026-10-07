@@ -65,7 +65,7 @@ automatically"). **This is the last time you re-install for updates.**
 
 1. Change whatever you want in the project (branding, scripts, `packages-extra.txt`, ...).
 2. Optionally raise the number in `VERSION` (cosmetic; every publish is a new version anyway).
-3. Double-click **`publish.bat`**, type a short message.
+3. Double-click **`publish.bat`**, type a short message (or just press Enter to skip it).
 
 GitHub builds it, and installed systems install it on their next daily update.
 Add an app: put its Arch package name in `packages-extra.txt` -> publish -> it appears on every RustOS.
@@ -84,7 +84,7 @@ Add an app: put its Arch package name in `packages-extra.txt` -> publish -> it a
 ## Releasing a new version (what happens)
 
 1. Change anything (scripts, packages-extra.txt, branding, ...).
-2. Double-click **publish.bat**. Type what you changed (this becomes a line in the "What's new" popup).
+2. Double-click **publish.bat**. Type what you changed (this becomes a line in the "What's new" popup), or press Enter to skip.
    Type a new version number for a big release (like `1.2`), or press Enter.
 3. GitHub builds and signs the update in about 3 minutes (Actions tab).
 4. Every installed RustOS gets it with its next daily update, and shows the "RustOS updated" popup.
