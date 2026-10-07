@@ -70,6 +70,7 @@ while true; do
   [ -n "$held" ] && menu+=(resume "Resume automatic updates now")
   menu+=(auto  "Turn automatic updates $other"
          apps  "Apps and Windows programs (office, video, printing, .exe support)"
+         av    "Antivirus (scan files and folders)"
          edu   "Education Center (PDF tools, Canva, study apps)"
          games "Gaming setup (Steam, drivers, performance tools)"
          log   "Update history")
@@ -83,6 +84,7 @@ while true; do
     undo)   /usr/local/bin/rustos-rollback ;;
     resume) pkexec /usr/local/bin/rustos-autoupdate resume >/dev/null 2>&1 ;;
     apps)   /usr/local/bin/rustos-apps ;;
+    av)     /usr/local/bin/rustos-antivirus ;;
     edu)    /usr/local/bin/rustos-education ;;
     games) /usr/local/bin/rustos-gaming ;;
     log)   show_log ;;

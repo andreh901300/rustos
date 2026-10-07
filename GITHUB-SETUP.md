@@ -61,6 +61,12 @@ Run **`build.bat`** again. The ISO now knows your update address and trusts your
 from this ISO (the installer says "RustOS repository OK - this system will receive RustOS updates
 automatically"). **This is the last time you re-install for updates.**
 
+## Publishing from RustOS (Linux)
+
+Use `bash publish.sh` in the project folder instead of `publish.bat`. It connects the folder to GitHub by itself and
+signs you in through the browser the first time. If you have no project folder on RustOS yet:
+`git clone https://github.com/andreh901300/rustos ~/rustos-arch` and copy your changed files into it.
+
 ## Every new version
 
 1. Change whatever you want in the project (branding, scripts, `packages-extra.txt`, ...).

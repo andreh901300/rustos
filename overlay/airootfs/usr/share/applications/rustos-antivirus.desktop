@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=RustOS Antivirus
+Comment=Scan files and folders for viruses (ClamAV)
+Exec=/usr/local/bin/rustos-antivirus
+Icon=security-high
+Terminal=false
+Categories=System;Security;

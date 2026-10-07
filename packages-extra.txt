@@ -76,6 +76,7 @@ zram-generator
 reflector
 pacman-contrib
 libnotify
+less
 
 # --- Hyper-V guest tools (clipboard/time/shutdown from Hyper-V Manager) ---
 hyperv

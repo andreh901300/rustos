@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+# RustOS Antivirus: scan files and folders with ClamAV, when YOU ask (nothing runs in the background, so RustOS stays light).
+# Start it from the app menu ("RustOS Antivirus"), right-click a file or folder -> "Scan for viruses", or run:  rustos-antivirus
+# ClamAV is installed the first time you open this (a few hundred MB for the virus database).
+Q_USER="${XDG_DATA_HOME:-$HOME/.local/share}/rustos-quarantine"
+Q_ROOT=/var/lib/rustos/quarantine
+T="RustOS Antivirus"
+
+# ============================================================== root: install ClamAV
+if [ "${1:-}" = --install ]; then
+  [ "$(id -u)" = 0 ] || exec sudo "$0" --install
+  rm -f /run/rustos-antivirus.status
+  fail() { echo; echo "Something went wrong: $1"; echo failed > /run/rustos-antivirus.status; exit 1; }
+  echo "== Installing ClamAV"
+  pacman -Sy --noconfirm || fail "could not reach the package servers. Are you online?"
+  pacman -S --noconfirm --needed clamav || fail "the ClamAV install failed (see the lines above)."
+  # some packages ship the config with an 'Example' line that stops ClamAV from starting
+  for c in /etc/clamav/freshclam.conf /etc/clamav/clamd.conf; do
+    [ -f "$c" ] && sed -i 's/^Example/#Example/' "$c"
+  done
+  echo "== Downloading the virus database (a few hundred MB, please wait)"
+  freshclam || fail "the virus database could not be downloaded. Check your internet and run RustOS Antivirus again."
+  # keeps the database current (small, wakes a few times a day)
+  systemctl enable --now clamav-freshclam.service >/dev/null 2>&1 || true
+  echo ok > /run/rustos-antivirus.status
+  echo; echo "All done."
+  exit 0
+fi
+
+# ============================================================== root: update the database
+if [ "${1:-}" = --update ]; then
+  [ "$(id -u)" = 0 ] || exec sudo "$0" --update
+  rm -f /run/rustos-antivirus.status
+  echo "== Updating the virus database"
+  if systemctl is-active --quiet clamav-freshclam.service; then
+    systemctl restart clamav-freshclam.service && sleep 8
+  else
+    freshclam || { echo failed > /run/rustos-antivirus.status; exit 1; }
+  fi
+  echo ok > /run/rustos-antivirus.status
+  echo "Done."
+  exit 0
+fi
+
+# ============================================================== (terminal window) run one scan
+# usage: --run-scan <dir> <sudo 0|1> <paths...>   writes <dir>/found.txt and <dir>/status
+if [ "${1:-}" = --run-scan ]; then
+  dir=$2; usesudo=$3; shift 3
+  if [ "$usesudo" = 1 ] && [ "$(id -u)" != 0 ]; then exec sudo "$0" --run-scan "$dir" "$usesudo" "$@"; fi
+  : > "$dir/found.txt"
+  echo "Scanning. This window shows every file. Infected files are listed again at the end."
+  echo "(A scan can use over 1 GB of memory while it runs.)"
+  echo
+  excl=(--exclude-dir='/rustos-quarantine' --exclude-dir='^/(proc|sys|dev|run)(/|$)' --exclude-dir='^/var/lib/clamav')
+  clamscan -r "${excl[@]}" "$@" 2>&1 | tee >(grep 'FOUND$' > "$dir/found.txt")
+  echo "${PIPESTATUS[0]}" > "$dir/status"
+  chmod -R a+rX "$dir" 2>/dev/null || true
+  echo
+  echo "Scan finished."
+  read -r -p "Press Enter to close this window. " _
+  exit 0
+fi
+
+# ============================================================== (root, via pkexec) move or delete infected files
+# usage: --act quarantine|delete <list file> <quarantine dir>
+if [ "${1:-}" = --act ]; then
+  [ "$(id -u)" = 0 ] || exit 1
+  mode=$2; list=$3; qdir=$4
+  [ "$mode" = quarantine ] && { mkdir -p "$qdir"; chmod 700 "$qdir"; }
+  while IFS= read -r f; do
+    [ -n "$f" ] && [ -f "$f" ] || continue
+    case "$mode" in
+      quarantine) mv --backup=numbered -- "$f" "$qdir/" && chmod 000 "$qdir/$(basename -- "$f")" ;;
+      delete)     rm -f -- "$f" ;;
+    esac
+  done < "$list"
+  exit 0
+fi
+
+# ============================================================== part 1 (you)
+if [ -d /run/archiso ]; then
+  kdialog --title "$T" --icon rustos --msgbox "The antivirus works on the installed RustOS.<br>Install it first, then open this again."
+  exit 0
+fi
+
+ready() { command -v clamscan >/dev/null 2>&1 && compgen -G '/var/lib/clamav/*.c[vl]d' >/dev/null; }
+
+ensure_installed() {
+  ready && return 0
+  kdialog --title "$T" --icon rustos --yes-label "Install" --no-label "Cancel" --yesno \
+    "The antivirus (ClamAV) is not installed yet.<br><br>It downloads a few hundred MB for the virus database and needs your password.<br>It only runs when you scan, so RustOS stays light.<br><br>Install it now?" || return 1
+  rm -f /run/rustos-antivirus.status
+  konsole --nofork --title "$T" -e bash -c \
+    '/usr/local/bin/rustos-antivirus --install; echo; read -r -p "Press Enter to close this window. " _'
+  if [ "$(cat /run/rustos-antivirus.status 2>/dev/null)" != ok ]; then
+    kdialog --title "$T" --icon rustos --sorry "The antivirus was not installed. Scroll the terminal window for the first error, or try again."
+    return 1
+  fi
+  return 0
+}
+
+# act <quarantine|delete> <list file> <sudo 0|1>
+act() {
+  if [ "$3" = 1 ]; then
+    pkexec /usr/local/bin/rustos-antivirus --act "$1" "$2" "$Q_ROOT"
+  else
+    local f
+    [ "$1" = quarantine ] && { mkdir -p "$Q_USER"; chmod 700 "$Q_USER"; }
+    while IFS= read -r f; do
+      [ -n "$f" ] && [ -f "$f" ] || continue
+      case "$1" in
+        quarantine) mv --backup=numbered -- "$f" "$Q_USER/" && chmod 000 "$Q_USER/$(basename -- "$f")" ;;
+        delete)     rm -f -- "$f" ;;
+      esac
+    done < "$2"
+  fi
+}
+
+# scan <sudo 0|1> <paths...>
+scan() {
+  local usesudo=$1; shift
+  ensure_installed || return 0
+  local d; d=$(mktemp -d /tmp/rustos-av.XXXXXX)
+  konsole --nofork --title "$T" -e /usr/local/bin/rustos-antivirus --run-scan "$d" "$usesudo" "$@"
+  local st; st=$(cat "$d/status" 2>/dev/null || echo 2)
+  local n=0
+  [ -s "$d/found.txt" ] && n=$(wc -l < "$d/found.txt")
+  if [ "$n" -gt 0 ]; then
+    sed -E 's/: [^ ]+ FOUND$//' "$d/found.txt" > "$d/list.txt"
+    local shown; shown=$(head -n 8 "$d/found.txt" | sed -E 's/&/\&amp;/g; s/</\&lt;/g; s/: ([^ ]+) FOUND$/ <b>(\1)<\/b>/; s/$/<br>/' | tr -d '\n')
+    [ "$n" -gt 8 ] && shown="$shown...and $((n - 8)) more<br>"
+    local choice
+    choice=$(kdialog --title "$T" --icon rustos --menu \
+      "<b>$n infected file(s) found:</b><br>$shown"$'\n'"What should RustOS do with them?" \
+      quarantine "Lock them away in the quarantine folder (safe, can be undone)" \
+      delete     "Delete them" \
+      leave      "Leave them alone") || choice=leave
+    case "$choice" in
+      quarantine) act quarantine "$d/list.txt" "$usesudo"
+                  kdialog --title "$T" --icon rustos --msgbox "Done. The files are locked in:<br><tt>$([ "$usesudo" = 1 ] && echo "$Q_ROOT" || echo "$Q_USER")</tt><br><br>To get one back, unlock it with <tt>chmod</tt> in a terminal and move it out." ;;
+      delete)     act delete "$d/list.txt" "$usesudo"
+                  kdialog --title "$T" --icon rustos --msgbox "The infected files were deleted." ;;
+    esac
+  elif [ "$st" = 0 ]; then
+    kdialog --title "$T" --icon rustos --msgbox "<b>No threats found.</b><br>Everything that was scanned is clean."
+  else
+    kdialog --title "$T" --icon rustos --sorry "The scan had problems, so it may not be complete. Some files could not be read, or the scan was stopped.<br><br>No infected files were found in what was scanned."
+  fi
+  rm -rf "$d"
+}
+
+dbinfo() {
+  local f; f=$(ls -t /var/lib/clamav/*.c[vl]d 2>/dev/null | head -n 1)
+  if [ -n "$f" ]; then date -r "$f" '+%a %d %b %Y'; else echo "not installed yet"; fi
+}
+
+# right-click scan: rustos-antivirus --scan <paths...>
+if [ "${1:-}" = --scan ]; then
+  shift
+  [ "$#" -gt 0 ] || exit 0
+  scan 0 "$@"
+  exit 0
+fi
+
+userdir() { local d; d=$(xdg-user-dir "$1" 2>/dev/null); [ -n "$d" ] && [ -d "$d" ] && echo "$d"; }
+
+while true; do
+  choice=$(kdialog --title "$T" --icon rustos --menu \
+    "Scans only when you ask. Nothing runs in the background."$'\n'"Virus database last updated: $(dbinfo)" \
+    quick  "Quick scan: Downloads, Desktop, Documents" \
+    folder "Scan a folder, drive or file..." \
+    home   "Scan my whole home folder" \
+    pc     "Scan the whole PC (slow, asks for your password)" \
+    update "Update the virus database now" \
+    quar   "Open the quarantine folder" \
+    about  "What this does and does not do") || exit 0
+  case "$choice" in
+    quick)
+      paths=()
+      for k in DOWNLOAD DESKTOP DOCUMENTS; do d=$(userdir "$k") && paths+=("$d"); done
+      [ "${#paths[@]}" -gt 0 ] || paths=("$HOME")
+      scan 0 "${paths[@]}" ;;
+    folder)
+      p=$(kdialog --title "$T" --icon rustos --getexistingdirectory "$HOME") && [ -n "$p" ] && scan 0 "$p" ;;
+    home)  scan 0 "$HOME" ;;
+    pc)    scan 1 / ;;
+    update)
+      ensure_installed || continue
+      rm -f /run/rustos-antivirus.status
+      konsole --nofork --title "$T" -e bash -c '/usr/local/bin/rustos-antivirus --update; echo; read -r -p "Press Enter to close this window. " _'
+      if [ "$(cat /run/rustos-antivirus.status 2>/dev/null)" = ok ]; then
+        kdialog --title "$T" --icon rustos --msgbox "The virus database is up to date.<br>Last updated: $(dbinfo)"
+      else
+        kdialog --title "$T" --icon rustos --sorry "The update did not finish. Check your internet and try again."
+      fi ;;
+    quar)
+      mkdir -p "$Q_USER"
+      kdialog --title "$T" --icon rustos --msgbox "Quarantined files are locked so nothing can run them.<br>Files found during a whole-PC scan are kept in <tt>$Q_ROOT</tt> (open it in a terminal with sudo)."
+      xdg-open "$Q_USER" >/dev/null 2>&1 & ;;
+    about)
+      kdialog --title "$T" --icon rustos --msgbox \
+"<b>What it is</b><br>ClamAV, a well-known open-source scanner. RustOS adds the simple window and the right-click Scan option.<br><br>\
+<b>What it does</b><br>&bull; Finds known viruses and malware, including Windows ones hiding in downloads or on a USB stick.<br>&bull; Good to run on a file before you share it or run an .exe.<br><br>\
+<b>What it does not do</b><br>&bull; It is not real-time protection: it only checks when you ask.<br>&bull; It will miss brand-new malware. No scanner catches everything.<br>&bull; Real Linux malware is rare, so careful habits matter more: install from Discover, not from random websites.<br><br>\
+A scan can use over 1 GB of memory while it runs." ;;
+  esac
+done

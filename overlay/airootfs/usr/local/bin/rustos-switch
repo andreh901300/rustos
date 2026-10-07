@@ -31,6 +31,7 @@ while true; do
     find  "Find a replacement for a Windows app" \
     apps  "Add apps: office, video, printing, gaming" \
     edu   "Education Center: PDF tools, Canva, study apps" \
+    av    "Antivirus: scan a file or folder" \
     tips  "Good to know when you switch") || exit 0
   case "$choice" in
     files) windows_files ;;
@@ -38,6 +39,7 @@ while true; do
     find)  kdialog --title "Windows app replacements" --icon rustos --textbox "$EQ" 760 560 ;;
     apps)  /usr/local/bin/rustos-apps ;;
     edu)   /usr/local/bin/rustos-education ;;
+    av)    /usr/local/bin/rustos-antivirus ;;
     tips)  kdialog --title "$T" --icon rustos --msgbox \
 "<b>Good to know</b><br><br>
 &bull; The <b>Windows key</b> opens the menu. Alt+Tab switches windows like in Windows.<br>

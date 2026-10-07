@@ -104,6 +104,12 @@ tweaks you make in this project (branding, installer, package list). Those need 
 installed systems can pull from, which needs somewhere to host files (GitHub Pages or any web host).
 Arch is rolling: very rarely an update needs manual steps (see archlinux.org/news).
 
+## Publishing from RustOS (no Windows needed)
+
+First time only: `git clone https://github.com/andreh901300/rustos ~/rustos-arch`, then copy your changed files in.
+After that, in the project folder: `bash publish.sh`. It asks for a one-line message and a version number, pushes to GitHub,
+and signs you in to GitHub in the browser the first time (it installs `github-cli` for that). `publish.bat` is the same thing for Windows.
+
 ## Updates when YOU make a new version
 
 `rustos-base` (branding, tools, auto-updater, app list) is published as a signed package repository on
@@ -154,6 +160,15 @@ Menu -> **RustOS Education Center** (also offered in **RustOS Apps** and the Upd
 Linux program, so RustOS adds a menu entry that opens the site in Firefox (needs internet and your own account).
 **Study apps**: Calibre, Anki, Zotero, Obsidian, Scratch, GeoGebra, Stellarium, Zoom. Nothing is installed by default.
 Flatpak IDs and some package names are unverified on a real install; missing ones are skipped with a message.
+
+## Antivirus
+
+Menu -> **RustOS Antivirus**, or right-click any file or folder -> **Scan for viruses (RustOS)**. It uses **ClamAV**,
+installed the first time you open it (a few hundred MB for the virus database; the database then updates by itself).
+Scans: quick (Downloads, Desktop, Documents), a folder / drive / file, the whole home folder, or the whole PC.
+Infected files can be locked in a quarantine folder or deleted. It is **not** real-time protection (nothing runs in the
+background, which keeps RustOS light), it misses brand-new malware, and a scan can use over 1 GB of memory.
+Handy before you run a downloaded `.exe` or open a USB stick from someone else.
 
 ## Undo an update
 

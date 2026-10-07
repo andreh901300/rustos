@@ -22,7 +22,7 @@ put() { # put <mode> <source> <destination-in-package>
 }
 for f in neofetch rustos-branding rustos-first-login rustos-update rustos-autoupdate rustos-bootloader-update \
          rustos-update-event rustos-update-notify rustos-update-center rustos-gaming \
-         rustos-restorepoint rustos-rollback rustos-run-exe rustos-apps rustos-switch rustos-education; do
+         rustos-restorepoint rustos-rollback rustos-run-exe rustos-apps rustos-switch rustos-education rustos-antivirus; do
   put 755 "$OV/usr/local/bin/$f" "usr/local/bin/$f"
 done
 put 644 "$OV/etc/systemd/system/rustos-update.service" etc/systemd/system/rustos-update.service
@@ -45,6 +45,8 @@ put 644 "$OV/usr/share/applications/rustos-exe.desktop"           usr/share/appl
 put 644 "$OV/usr/share/applications/rustos-apps.desktop"          usr/share/applications/rustos-apps.desktop
 put 644 "$OV/usr/share/applications/rustos-switch.desktop"        usr/share/applications/rustos-switch.desktop
 put 644 "$OV/usr/share/applications/rustos-education.desktop"     usr/share/applications/rustos-education.desktop
+put 644 "$OV/usr/share/applications/rustos-antivirus.desktop"     usr/share/applications/rustos-antivirus.desktop
+put 755 "$OV/usr/share/kio/servicemenus/rustos-scan-virus.desktop" usr/share/kio/servicemenus/rustos-scan-virus.desktop
 put 755 "$OV/usr/share/kio/servicemenus/rustos-run-game.desktop"  usr/share/kio/servicemenus/rustos-run-game.desktop
 put 644 "$OV/etc/xdg/mimeapps.list"                               etc/xdg/mimeapps.list
 put 644 "$OV/usr/share/rustos/windows-equivalents.txt"            usr/share/rustos/windows-equivalents.txt
