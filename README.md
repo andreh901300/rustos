@@ -119,7 +119,7 @@ without reinstalling. One-time setup: **GITHUB-SETUP.md**. Then each release is 
 ## What users see when you release a new version
 
 After any update (the daily one, Discover, or a manual `pacman -Syu`) a popup appears:
-**"RustOS updated to 2.2"** with the top 3 lines of your change list, a **What's new** button and, if the
+**"RustOS updated to 2.4"** with the top 3 lines of your change list, a **What's new** button and, if the
 kernel changed, a **Restart now** button. If the PC was off or the user logged out, the popup shows at the
 next login. It only shows once per update.
 

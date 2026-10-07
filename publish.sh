@@ -52,6 +52,22 @@ if [ -n "$NEWVER" ] && ! printf '%s' "$NEWVER" | grep -Eq '^[0-9]+(\.[0-9]+){0,2
 fi
 COMMITMSG=${MSG:-update}
 
+# The version number must never go down, or installed systems ignore the update ("local is newer").
+# Check against every version this project has ever published.
+vmm() { printf '%s' "$1" | awk -F. '{ print $1 * 1000000 + $2 }'; }
+hist=$(git log origin/main --format=%H -- VERSION 2>/dev/null | while read -r h; do
+         git show "$h:VERSION" 2>/dev/null | tr -d ' \r\n'; echo; done |
+       grep -E '^[0-9]+(\.[0-9]+)*$' | sort -V | tail -n1)
+target=${NEWVER:-$(tr -d ' \r\n' < VERSION 2>/dev/null)}
+while [ -n "$hist" ] && [ -n "$target" ] && [ "$(vmm "$target")" -lt "$(vmm "$hist")" ]; do
+  echo
+  echo "Version $target is LOWER than $hist, which you already published. Installed systems would ignore the update."
+  read -r -p "Type a version higher than $hist (like $(( ${hist%%.*} )).$(( $(printf '%s' "$hist" | cut -d. -f2) + 1 ))): " NEWVER
+  NEWVER=$(printf '%s' "$NEWVER" | tr -d ' \r\n')
+  printf '%s' "$NEWVER" | grep -Eq '^[0-9]+(\.[0-9]+){0,2}$' || NEWVER=""
+  target=${NEWVER:-$target}
+done
+
 # add the line (and the new version) to CHANGELOG.txt
 if [ -n "$MSG" ] || [ -n "$NEWVER" ]; then
   [ -f CHANGELOG.txt ] || : > CHANGELOG.txt

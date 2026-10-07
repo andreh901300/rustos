@@ -1,7 +1,10 @@
 RustOS change list. Newest on top. Installed systems show this in "What's new" after an update.
 Each "== RustOS x.y ==" line starts a version. publish.bat adds a line under the newest version for you.
 
-== RustOS 2.2 ==
+== RustOS 2.4 ==
+- 2.4
+
+== RustOS 2.4 ==
 - Windows App Support (like Zorin OS): double-click an .exe, .msi or .lnk and RustOS runs it with Wine; a new Windows App Support window installs programs, lists them, adds fonts, Visual C++, DirectX and .NET, looks up compatibility and resets the Windows environment
 - Warns before running things that are known not to work well (anti-cheat games, Microsoft Office, Adobe)
 - Right-click an .exe, choose "Run as game" for GameMode and the MangoHud overlay

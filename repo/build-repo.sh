@@ -76,7 +76,7 @@ BASEV="$(tr -d ' \r\n' < VERSION)"
 case "$BASEV" in
   ''|*[!0-9.]*) echo "WARNING: VERSION must look like 1.2 (numbers and dots) - using 1.0 for now."; BASEV=1.0 ;;
 esac
-PKGVER="${BASEV}.$(date -u +%Y%m%d%H%M)"          # always increases -> installed systems always see it as newer
+PKGVER="${BASEV}.$(date -u +%Y%m%d%H%M)"          # the timestamp always increases, but the version number must never go DOWN (publish.sh checks that)
 DEPENDS="$(grep -v '^\s*#' packages-extra.txt | sed '/^\s*$/d' | awk '{printf "\047%s\047 ", $1}')"
 URL="${REPO_URL:-https://archlinux.org}"
 
