@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 OV=overlay/airootfs
-OUT="$ROOT/out/site"
+OUT="${RUSTOS_OUT:-$ROOT/out/site}"     # the beta channel is built into out/site/beta
 WORK=/tmp/rustos-pkg
 STAGE_ONLY=0; [ "${1:-}" = "--stage-only" ] && STAGE_ONLY=1
 
@@ -22,7 +22,7 @@ put() { # put <mode> <source> <destination-in-package>
 }
 for f in neofetch rustos-branding rustos-first-login rustos-update rustos-autoupdate rustos-bootloader-update \
          rustos-update-event rustos-update-notify rustos-update-center rustos-gaming \
-         rustos-restorepoint rustos-rollback rustos-run-exe rustos-apps rustos-switch rustos-education rustos-antivirus rustos-exe-center rustos-ipad-mode rustos-debug rustos-bootsplash; do
+         rustos-restorepoint rustos-rollback rustos-run-exe rustos-apps rustos-switch rustos-education rustos-antivirus rustos-exe-center rustos-ipad-mode rustos-debug rustos-bootsplash rustos-channel; do
   put 755 "$OV/usr/local/bin/$f" "usr/local/bin/$f"
 done
 put 644 "$OV/etc/systemd/system/rustos-update.service" etc/systemd/system/rustos-update.service

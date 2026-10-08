@@ -104,6 +104,7 @@ file_permissions+=(
   ["/usr/local/bin/rustos-ipad-mode"]="0:0:755"
   ["/usr/local/bin/rustos-debug"]="0:0:755"
   ["/usr/local/bin/rustos-bootsplash"]="0:0:755"
+  ["/usr/local/bin/rustos-channel"]="0:0:755"
   ["/usr/share/kio/servicemenus/rustos-scan-virus.desktop"]="0:0:755"
   ["/usr/share/kio/servicemenus/rustos-run-game.desktop"]="0:0:755"
   ["/etc/sudoers.d/10-wheel"]="0:0:440"

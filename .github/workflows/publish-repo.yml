@@ -1,5 +1,7 @@
 name: Publish RustOS update repository
 
+# Builds the normal channel from "main" and, if there is a "beta" branch, the beta channel from it
+# (into the beta/ folder of the same site). publish.sh --beta pushes to "beta"; publish-beta.yml then starts this.
 on:
   push:
     branches: [main]
@@ -23,10 +25,35 @@ jobs:
       - name: Install tools
         run: pacman -Syu --noconfirm git gnupg pacman-contrib
       - uses: actions/checkout@v4
-      - name: Build, sign and assemble the repository
+        with:
+          ref: main
+      - name: Build, sign and assemble the repository (normal channel)
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         run: bash repo/build-repo.sh
+      - name: Build the beta channel
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          git config --global --add safe.directory '*'
+          beta_newer=0
+          if git ls-remote --exit-code --heads origin beta >/dev/null 2>&1; then
+            git fetch --depth 1 origin beta
+            # only a beta that is newer than main is used; after a normal publish, beta = normal
+            [ "$(git log -1 --format=%ct FETCH_HEAD)" -gt "$(git log -1 --format=%ct HEAD)" ] && beta_newer=1
+          fi
+          if [ "$beta_newer" = 1 ]; then
+            git worktree add --detach /tmp/beta FETCH_HEAD
+            (cd /tmp/beta && RUSTOS_OUT="$GITHUB_WORKSPACE/out/site/beta" bash repo/build-repo.sh)
+            # an older build-repo.sh ignores RUSTOS_OUT
+            if [ ! -f out/site/beta/x86_64/rustos.db ] && [ -d /tmp/beta/out/site ]; then
+              rm -rf out/site/beta && cp -a /tmp/beta/out/site out/site/beta
+            fi
+          else
+            echo "No newer beta: the beta channel gets the normal update."
+            mkdir -p out/site/beta
+            cp -a out/site/x86_64 out/site/aarch64 out/site/latest.json out/site/beta/ 2>/dev/null || true
+          fi
       - uses: actions/upload-pages-artifact@v3
         with:
           path: out/site

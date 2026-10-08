@@ -101,3 +101,11 @@ Add an app: put its Arch package name in `packages-extra.txt` -> publish -> it a
 3. GitHub builds and signs the update in about 3 minutes (Actions tab).
 4. Every installed RustOS gets it with its next daily update, and shows the "RustOS updated" popup.
    Right away: `sudo rustos-autoupdate now`, or Update Center -> Check for updates.
+
+## Beta updates (test before everyone gets it)
+
+1. On your RustOS PC, once: `sudo rustos-channel beta`
+2. Publish a test: `bash publish.sh --beta`  (the first time GitHub may ask for the "workflow" permission again).
+3. Wait for both Actions runs ("Publish RustOS beta" and then "Publish RustOS update repository") to be green, then
+   `sudo rustos-autoupdate now` on the test PC and try it (`.debug selftest` helps).
+4. Good? `bash publish.sh` gives exactly that to everyone. Broken? Fix it and publish `--beta` again.

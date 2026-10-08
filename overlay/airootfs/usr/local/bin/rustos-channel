@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Which RustOS update channel this PC follows.
+#   rustos-channel            show it
+#   rustos-channel beta       get test updates first (publish.sh --beta). Things may break: for testers.
+#   rustos-channel stable     back to the normal updates (goes back to the normal versions right away)
+set -u
+CONF=/etc/pacman.conf
+
+server() { awk '/^\[rustos\]/{f=1;next} /^\[/{f=0} f && /^Server/{sub(/^Server *= */,""); print; exit}' "$CONF" 2>/dev/null; }
+base()   { server | sed -E 's#/\$arch.*$##; s#/beta$##'; }
+current() { case "$(server)" in */beta/*) echo beta ;; "") echo none ;; *) echo stable ;; esac; }
+
+set_server() { # set_server URL
+  local url=$1
+  cp -p "$CONF" "$CONF.rustos-bak"
+  awk -v url="$url" '
+    /^\[rustos\]/ { f = 1; print; next }
+    /^\[/        { f = 0 }
+    f && /^Server/ { print "Server = " url; next }
+    { print }' "$CONF.rustos-bak" > "$CONF.new" && mv "$CONF.new" "$CONF"
+}
+
+case "${1:-status}" in
+  status|"")
+    echo "Update channel: $(current)"
+    echo "Server: $(server)"
+    [ "$(current)" = beta ] && echo "(Back to normal updates: sudo rustos-channel stable)"
+    ;;
+  beta|stable)
+    [ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
+    [ "$(current)" != none ] || { echo "There is no [rustos] repository in $CONF."; exit 1; }
+    if [ "$1" = beta ]; then
+      set_server "$(base)/beta/\$arch"
+      echo "This PC now gets BETA updates (test versions). Updating..."
+      pacman -Syu --noconfirm
+    else
+      set_server "$(base)/\$arch"
+      echo "This PC is back on the normal updates. Going back to the normal versions..."
+      # -uu allows going back to an older version (the beta may be newer)
+      pacman -Syuu --noconfirm
+    fi
+    echo "Done. Channel: $(current)"
+    ;;
+  *) echo "Usage: rustos-channel [status | beta | stable]"; exit 2 ;;
+esac

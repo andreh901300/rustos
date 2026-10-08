@@ -2,9 +2,10 @@
 _rustos_debug() {
   local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD-1]} w=""
   case $COMP_CWORD in
-    1) w="help info update logs services net gpu disk report fix mods mod mainmod version boot temp battery top usb ports wine packages history restore clean speed bench watch crash env display sound bluetooth" ;;
+    1) w="selftest channel help info update logs services net gpu disk report fix mods mod mainmod version boot temp battery top usb ports wine packages history restore clean speed bench watch crash env display sound bluetooth" ;;
     2) case $prev in
          logs) w="boot last kernel update" ;;
+         channel) w="beta stable" ;;
          fix)  w="plasma audio network dns time pacman-lock keyring ipad flatpak fonts icons initramfs grub bootsplash mirrors exe" ;;
          mod)  w="new edit delete $(rustos-debug _names 2>/dev/null | tr '\n' ' ')" ;;
        esac ;;

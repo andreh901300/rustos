@@ -46,6 +46,8 @@ usage() {
 ${B}${OR}RustOS debug${R}  ${D}(.debug or rustos-debug)${R}
 
 ${B}Look around${R}
+  $ME selftest          check every RustOS feature and save a PASS / WARN / FAIL list to share
+  $ME channel [beta|stable]  which updates this PC gets (beta = test versions first)
   $ME info              what this PC is running (version, kernel, desktop, graphics, disk)
   $ME update            is the update channel online? is an update waiting?
   $ME logs [what]       errors from this boot. what = boot | last | update | kernel
@@ -406,6 +408,91 @@ cmd_bluetooth() {
   echo "  Paired:"; bluetoothctl devices Paired 2>/dev/null | sed 's/^Device /    /'
 }
 
+# ------------------------------------------------------------------ selftest (RustOS 2.10)
+ST_P=0; ST_W=0; ST_F=0; ST_OUT=""
+st_pass() { ST_P=$((ST_P + 1)); printf '  %s✓ PASS%s  %s\n' "$GR" "$R" "$*"; ST_OUT+="PASS  $*"$'\n'; }
+st_warn() { ST_W=$((ST_W + 1)); printf '  %s! WARN%s  %s\n' "$YL" "$R" "$*"; ST_OUT+="WARN  $*"$'\n'; }
+st_fail() { ST_F=$((ST_F + 1)); printf '  %s✗ FAIL%s  %s\n' "$RD" "$R" "$*"; ST_OUT+="FAIL  $*"$'\n'; }
+st() {   # st "what" command...   (pass when the command succeeds, fail otherwise)
+  local what=$1; shift
+  if "$@" >/dev/null 2>&1; then st_pass "$what"; else st_fail "$what"; fi
+}
+
+cmd_selftest() {
+  local arch; arch=$(uname -m)
+  printf '%s%sRustOS self-test%s  %s%s, %s%s\n' "$B" "$OR" "$R" "$D" "$(rustos_version)" "$arch" "$R"
+
+  title "Updates"
+  st "rustos-base package is installed" pacman -Q rustos-base
+  local base; base=$(repo_base)
+  if [ -n "$base" ]; then st_pass "Update channel set: $base"; else st_fail "No [rustos] repository in /etc/pacman.conf"; fi
+  if [ -n "$base" ] && curl -fsSI --max-time 8 "$base/$arch/rustos.db" >/dev/null 2>&1; then st_pass "Update channel answers"; else st_warn "Update channel not reachable (offline?)"; fi
+  if systemctl is-enabled --quiet rustos-update.timer 2>/dev/null; then st_pass "Automatic updates are on"; else st_warn "Automatic updates are off (.debug mod autoupdate on)"; fi
+  if [ -n "$(ls /var/lib/rustos/restorepoints/*.list 2>/dev/null | head -n1)" ]; then st_pass "Restore points exist (undo works)"; else st_warn "No restore point yet (one is made at the next update)"; fi
+  if have rustos-channel; then st_pass "Channel: $(rustos-channel 2>/dev/null | head -n1 | sed 's/^Update channel: //')"; fi
+
+  title "System"
+  local failed; failed=$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | tr '\n' ' ')
+  if [ -z "$failed" ]; then st_pass "No failed services"; else st_fail "Failed services: $failed"; fi
+  local free_gb; free_gb=$(df --output=avail -BG / 2>/dev/null | tail -n1 | tr -dc '0-9')
+  if [ "${free_gb:-0}" -ge 5 ]; then st_pass "Disk space: ${free_gb} GB free"; else st_fail "Only ${free_gb:-?} GB free (.debug clean)"; fi
+  if swapon --show 2>/dev/null | grep -q zram; then st_pass "Compressed RAM swap (zram) is on"; else st_warn "zram swap is not on"; fi
+  if getent hosts archlinux.org >/dev/null 2>&1; then st_pass "Internet and DNS work"; else st_warn "No internet right now"; fi
+  if [ -r /etc/rustos/bootloader.conf ]; then st_pass "Boot loader: $(boot_loader)"; else st_warn "Boot loader config missing (not installed with the RustOS installer?)"; fi
+  [ -e /var/lib/pacman/db.lck ] && ! pgrep -x pacman >/dev/null && st_fail "Stale pacman lock (.debug fix pacman-lock)"
+
+  title "Desktop"
+  if pgrep -x plasmashell >/dev/null; then st_pass "Plasma desktop is running"; else st_warn "Plasma is not running (are you in a desktop session?)"; fi
+  [ -n "${XDG_SESSION_TYPE:-}" ] && st_pass "Session: ${XDG_SESSION_TYPE}"
+  local c missing=""
+  for c in rustos-update-center rustos-apps rustos-exe-center rustos-run-exe rustos-gaming rustos-education rustos-antivirus \
+           rustos-ipad-mode rustos-switch rustos-rollback rustos-bootsplash rustos-channel rustos-first-login; do
+    have "$c" || missing="$missing $c"
+  done
+  if [ -z "$missing" ]; then st_pass "All RustOS tools are installed"; else st_fail "Missing tools:$missing (run an update)"; fi
+  local n; n=$(grep -vc '^#' /usr/share/rustos/apps.catalog 2>/dev/null)
+  if [ "${n:-0}" -gt 10 ]; then st_pass "RustOS Apps list: $n apps"; else st_fail "RustOS Apps list is missing"; fi
+
+  title "EXE Center (Windows programs)"
+  if [ "$arch" != x86_64 ]; then st_pass "ARM edition: .exe support is off on purpose"
+  else
+    if python3 -c 'import PyQt6.QtWidgets' 2>/dev/null; then st_pass "The new EXE Center window can start (PyQt6)"; else st_fail "PyQt6 missing: the EXE Center uses the old menu (.debug fix exe)"; fi
+    if python3 /usr/share/rustos/exe-center/exe_core.py selftest >/dev/null 2>&1; then st_pass "EXE Center logic works"; else st_fail "EXE Center files are broken (run an update)"; fi
+    if have wrestool; then st_pass "Program icons can be read (icoutils)"; else st_warn "icoutils missing: programs show a plain icon"; fi
+    if have wine; then st_pass "Wine: $(wine --version 2>/dev/null)"; else st_warn "Wine not installed yet (installs the first time you run an .exe)"; fi
+    if [ -s "$HOME/.cache/rustos-exe-center/window.log" ]; then st_warn "EXE Center window wrote errors: ~/.cache/rustos-exe-center/window.log"; fi
+  fi
+
+  title "Boot screen"
+  if [ "$arch" != x86_64 ]; then st_pass "ARM edition: boot screen is off on purpose"
+  else
+    if have plymouth-set-default-theme; then st_pass "Plymouth is installed"; else st_fail "Plymouth missing (sudo pacman -S plymouth)"; fi
+    if [ -f /usr/share/plymouth/themes/rustos/rustos.script ]; then st_pass "RustOS boot theme is installed"; else st_fail "RustOS boot theme files missing"; fi
+    if rustos-bootsplash status 2>/dev/null | grep -q ': ON'; then st_pass "Boot screen is on"
+      grep -qw splash /proc/cmdline && st_pass "'splash' is active in this start" || st_warn "Boot screen is set up but this start had no 'splash' (restart once)"
+    else st_warn "Boot screen is off (.debug mod bootsplash on)"; fi
+  fi
+
+  title "iPad mode and touch"
+  if [ -f /usr/share/applications/rustos-ipad-mode.desktop ]; then st_pass "iPad Mode is in the menu"; else st_fail "iPad Mode menu entry missing"; fi
+  if grep -lq 'X-KDE-Wayland-VirtualKeyboard=true' /usr/share/applications/*.desktop 2>/dev/null; then st_pass "Touch keyboard is installed"; else st_warn "Touch keyboard (maliit) not installed"; fi
+  st_pass "iPad mode: $(rustos-ipad-mode status 2>/dev/null)"
+
+  title "Other"
+  if have clamscan; then st_pass "Antivirus is installed"
+    local db; db=$(find /var/lib/clamav -name '*.c[lv]d' -mtime -8 2>/dev/null | head -n1)
+    [ -n "$db" ] && st_pass "Virus list is fresh" || st_warn "Virus list is older than a week (RustOS Antivirus updates it when you scan)"
+  else st_warn "Antivirus not installed yet (RustOS Antivirus installs it when you open it)"; fi
+  have fastfetch && st_pass "fastfetch shows the RustOS logo"
+
+  echo
+  printf '%s%d passed%s, %s%d warnings%s, %s%d failed%s\n' "$GR" "$ST_P" "$R" "$YL" "$ST_W" "$R" "$RD" "$ST_F" "$R"
+  local f; f="$HOME/rustos-selftest-$(date +%Y%m%d-%H%M).txt"
+  { echo "RustOS self-test, $(date), $(rustos_version) $arch"; printf '%s' "$ST_OUT"; echo "$ST_P passed, $ST_W warnings, $ST_F failed"; } > "$f"
+  info "Saved to $f. Send it in the Discord (or to the RustOS developer) so the red ones get fixed."
+  [ "$ST_F" = 0 ]
+}
+
 # ------------------------------------------------------------------ fixes
 cmd_fix() {
   case "${1:-}" in
@@ -481,7 +568,7 @@ EOF
 
 # ------------------------------------------------------------------ mods
 # Built-in mods. Each has: desc, on, off, state (prints on/off).
-BUILTIN="dark noanim accent prompt nobanner ipad autoupdate devtools bootsplash"
+BUILTIN="dark noanim accent prompt nobanner ipad autoupdate devtools bootsplash beta"
 
 block_add() {   # block_add NAME "lines" [top]
   block_del "$1"
@@ -509,6 +596,7 @@ mod_desc() {
     autoupdate) echo "Automatic updates every day" ;;
     devtools)   echo "Programming tools: gcc, make, git, base-devel (installs them)" ;;
     bootsplash) echo "RustOS boot screen (logo and progress bar while the PC starts)" ;;
+    beta)       echo "Beta updates: get test versions first (for testers)" ;;
   esac
 }
 mod_state() {
@@ -522,6 +610,7 @@ mod_state() {
     autoupdate) systemctl is-enabled --quiet rustos-update.timer 2>/dev/null && echo on || echo off ;;
     devtools)   pacman -Qq base-devel >/dev/null 2>&1 && pacman -Qq git >/dev/null 2>&1 && echo on || echo off ;;
     bootsplash) have rustos-bootsplash && rustos-bootsplash status 2>/dev/null | grep -q ': ON' && echo on || echo off ;;
+    beta)       have rustos-channel && rustos-channel 2>/dev/null | grep -q 'channel: beta' && echo on || echo off ;;
   esac
 }
 mod_set() {   # mod_set NAME on|off [arg]
@@ -546,6 +635,8 @@ mod_set() {   # mod_set NAME on|off [arg]
     autoupdate:off) rustos-autoupdate off ;;
     devtools:on)    need_root pacman -S --needed --noconfirm base-devel git ;;
     bootsplash:on)  need_root rustos-bootsplash on ;;
+    beta:on)        need_root rustos-channel beta ;;
+    beta:off)       need_root rustos-channel stable ;;
     bootsplash:off) need_root rustos-bootsplash off ;;
     devtools:off)   info "The tools stay installed (other apps may need them). Remove them by hand: sudo pacman -Rns base-devel"; return 0 ;;
     *) return 2 ;;
@@ -685,6 +776,8 @@ case "$sub" in
   mods)               cmd_mods ;;
   mod)                cmd_mod "$@" ;;
   mainmod|menu)       cmd_mainmod ;;
+  selftest|test)      cmd_selftest ;;
+  channel)            if [ -n "${1:-}" ]; then rustos-channel "$@"; else rustos-channel; fi ;;
   boot)               cmd_boot ;;
   temp|temps)         cmd_temp ;;
   battery|bat)        cmd_battery ;;

@@ -3,6 +3,10 @@
 # Run it from the project folder:   bash publish.sh
 # It connects the folder to your GitHub repository by itself the first time, adds your one-line message to
 # CHANGELOG.txt, commits, and pushes. GitHub then builds the update for every installed RustOS.
+#   bash publish.sh --beta   publish to the BETA channel only (PCs that ran: sudo rustos-channel beta).
+#                            Test it there, then run  bash publish.sh  to give the same thing to everyone.
+BETA=0
+for a in "$@"; do [ "$a" = --beta ] && BETA=1; done
 REMOTE="${RUSTOS_REMOTE:-https://github.com/andreh901300/rustos.git}"
 cd "$(dirname "$(readlink -f "$0")")" || exit 1
 
@@ -37,10 +41,20 @@ if [ -z "$(git config user.email)" ]; then
   git config user.email "${gmail:-rustos@users.noreply.github.com}"
 fi
 
+[ "$BETA" = 1 ] && { echo "== BETA publish: only PCs on the beta channel get this update. =="; echo; }
+git fetch -q origin main 2>/dev/null
+AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+ONLY_PUSH=0
 if [ -z "$(git status --porcelain)" ]; then
-  echo "Nothing changed since the last publish."
-  pause; exit 0
+  if [ "$BETA" = 1 ] || [ "${AHEAD:-0}" -gt 0 ]; then
+    ONLY_PUSH=1       # nothing new to commit, but something to send (beta -> everyone, or a retry)
+    [ "$BETA" = 0 ] && echo "Publishing what you already tested (the beta) to everyone."
+  else
+    echo "Nothing changed since the last publish."
+    pause; exit 0
+  fi
 fi
+if [ "$ONLY_PUSH" = 0 ]; then
 
 CURVER=$(tr -d ' \r\n' < VERSION 2>/dev/null)
 echo "This folder is RustOS ${CURVER:-?}."
@@ -104,10 +118,15 @@ if git diff --cached --quiet; then
   pause; exit 0
 fi
 git commit -q -m "$COMMITMSG" || die "The commit failed."
+fi   # ONLY_PUSH
 git pull -q --no-rebase --no-edit -X ours origin main >/dev/null 2>&1
 
 PUSHERR=$(mktemp)
-push() { GIT_TERMINAL_PROMPT=0 git push -q origin main 2>"$PUSHERR"; }
+if [ "$BETA" = 1 ]; then
+  push() { GIT_TERMINAL_PROMPT=0 git push -q -f origin HEAD:beta 2>"$PUSHERR"; }
+else
+  push() { GIT_TERMINAL_PROMPT=0 git push -q origin main 2>"$PUSHERR"; }
+fi
 need_gh() {
   command -v gh >/dev/null 2>&1 && return 0
   echo "Installing the GitHub sign-in tool (needs your password)..."
@@ -132,7 +151,13 @@ if ! push; then
 fi
 rm -f "$PUSHERR"
 echo
-echo "Pushed! GitHub is now building the update (about 2-3 minutes)."
-echo "Watch it on your repository's \"Actions\" tab."
-echo "Installed RustOS systems pick it up within a day, or right away with:  sudo rustos-autoupdate now"
+if [ "$BETA" = 1 ]; then
+  echo "Pushed to BETA! GitHub is now building it (about 3-5 minutes)."
+  echo "Only PCs on the beta channel get it. Put this PC on beta once with:  sudo rustos-channel beta"
+  echo "Happy with it? Run  bash publish.sh  (without --beta) to give it to everyone."
+else
+  echo "Pushed! GitHub is now building the update (about 2-3 minutes)."
+  echo "Watch it on your repository's \"Actions\" tab."
+  echo "Installed RustOS systems pick it up within a day, or right away with:  sudo rustos-autoupdate now"
+fi
 pause

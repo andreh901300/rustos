@@ -75,6 +75,7 @@ while true; do
          edu   "Education Center (PDF tools, Canva, study apps)"
          ipad  "iPad mode and touchscreen (iPad-style desktop, touch keyboard)"
          games "Gaming setup (Steam, drivers, performance tools)"
+         chan  "Update channel: normal or beta (test versions first)"
          log   "Update history")
   choice=$(kdialog --title "$T" --icon rustos \
     --menu "RustOS $(current_version)"$'\n'"Automatic updates: $state${held:+ (paused until $held)}"$'\n'"Last automatic update: ${last:-never}" \
@@ -91,6 +92,10 @@ while true; do
     edu)    /usr/local/bin/rustos-education ;;
     ipad)   /usr/local/bin/rustos-ipad-mode ;;
     games) /usr/local/bin/rustos-gaming ;;
+    chan)
+      ch=$(kdialog --title "$T" --icon rustos --menu "Which updates should this PC get?"$'\n'"$(rustos-channel 2>/dev/null | head -n1)" \
+        stable "Normal updates (recommended)" beta "Beta: test versions first. Things may break.") || continue
+      konsole --nofork --title "$T" -e bash -c 'sudo /usr/local/bin/rustos-channel "$1"; echo; read -r -p "Press Enter to close this window. " _' _ "$ch" ;;
     log)   show_log ;;
   esac
 done

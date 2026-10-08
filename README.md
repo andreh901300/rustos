@@ -281,6 +281,15 @@ In a terminal type `.debug help`. It is `/usr/local/bin/rustos-debug` (`.debug` 
   it puts everything back. The pacman hook `rustos-bootsplash.hook` turns it on once after an update (PCs installed with the
   RustOS installer only, never on ARM); new installs get it from the installer.
 
+## Testing first: selftest and the beta channel (2.10)
+
+- `.debug selftest` runs every check and writes `~/rustos-selftest-DATE.txt` (PASS / WARN / FAIL).
+- **Beta channel**: `bash publish.sh --beta` pushes to the `beta` branch. `publish-beta.yml` then starts `publish-repo.yml` on
+  main, which builds the normal channel from main and the beta channel from `beta` into `beta/` on the same site (only when
+  beta is newer than main; otherwise beta = normal). PCs join with `sudo rustos-channel beta` (pacman Server becomes
+  `.../beta/$arch`) and leave with `sudo rustos-channel stable` (`pacman -Syuu`, so they go back to the normal versions).
+  Happy with a beta? Run `bash publish.sh` without `--beta`: it publishes the same commits to everyone, even with no new changes.
+
 ## The website and the repository page
 
 The website (`rustos-site`, PHP) is a RustOS desktop: the fastfetch window can be dragged, there is a custom cursor, an

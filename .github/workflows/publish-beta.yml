@@ -1,0 +1,20 @@
+name: Publish RustOS beta
+
+# publish.sh --beta pushes to the "beta" branch. GitHub Pages only deploys from main, so this starts the normal
+# publish workflow on main, which builds both channels.
+on:
+  push:
+    branches: [beta]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  start:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start the publish workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run publish-repo.yml --ref main --repo "$GITHUB_REPOSITORY"
