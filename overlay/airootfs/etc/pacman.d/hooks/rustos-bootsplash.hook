@@ -1,0 +1,12 @@
+# Turns the RustOS boot screen on once (PCs with a boot loader set up by the RustOS installer).
+# Turn it off any time with:  rustos-bootsplash off   (or .debug mod bootsplash off)
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = rustos-base
+
+[Action]
+Description = Setting up the RustOS boot screen (only the first time)...
+When = PostTransaction
+Exec = /usr/local/bin/rustos-bootsplash auto

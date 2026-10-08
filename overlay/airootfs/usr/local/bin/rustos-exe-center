@@ -35,6 +35,26 @@ if [ "$(uname -m)" != x86_64 ]; then
   exit 0
 fi
 
+# ============================================================== the new window (RustOS 2.9)
+# Opens the EXE Center app. If it cannot start (no PyQt6 yet, or an error), the classic menu below is used instead.
+#   rustos-exe-center --classic   always use the classic menu
+CLASSIC=0
+[ "${1:-}" = --classic ] && { CLASSIC=1; shift; }
+GUI=/usr/share/rustos/exe-center/exe_center.py
+GUILOG="${XDG_CACHE_HOME:-$HOME/.cache}/rustos-exe-center/window.log"
+if [ "$CLASSIC" = 0 ] && [ -r "$GUI" ] && { [ -z "${1:-}" ] || [ "$1" = --add ]; } \
+   && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && python3 -c 'import PyQt6.QtWidgets' 2>/dev/null; then
+  mkdir -p "${GUILOG%/*}"
+  start=$(date +%s)
+  python3 "$GUI" "$@" 2>>"$GUILOG" && exit 0
+  # it crashed: only fall back if it died right away (a crash later should not pop up a second window)
+  if [ $(( $(date +%s) - start )) -lt 5 ]; then
+    kdialog --title "$T" --passivepopup "The EXE Center window could not start. Opening the classic menu. (Details: $GUILOG)" 8 2>/dev/null
+  else
+    exit 1
+  fi
+fi
+
 esc() { sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'; }
 need_wine() { "$RUN" --ensure; command -v wine >/dev/null 2>&1; }
 

@@ -1,6 +1,13 @@
 RustOS change list. Newest on top. Installed systems show this in "What's new" after an update.
 Each "== RustOS x.y ==" line starts a version. publish.bat adds a line under the newest version for you.
 
+== RustOS 2.9 ==
+- New RustOS EXE Center app: a real window with a game library that shows each program's own icon, search, favourites, drag and drop, Run and Run as game, settings per program (always game mode, FPS counter, extra start options, error log), one-click downloads (Visual C++, DXVK, DirectX, .NET, fonts and more), DLL installer, setups and runtimes pages, tools (C: drive, Windows settings, task manager, stop all) and a live log. The classic menu is still there
+- RustOS boot screen: the RustOS logo with a warm glow and a progress bar while the PC starts (also asks for the disk password nicely), and a RustOS background for the GRUB boot menu. Turned on once by this update. Turn it off with: rustos-bootsplash off
+- 20 more .debug commands: boot, temp, battery, top, watch, wine, packages, history, restore, clean, speed, bench, usb, ports, display, sound, bluetooth, env, crash
+- More .debug fixes: dns, time, fonts, icons, initramfs, grub, bootsplash, mirrors, exe
+- New mod: .debug mod bootsplash on/off
+
 == RustOS 2.8 ==
 - New .debug command in the terminal: type  .debug help  to see everything
 - .debug info, update, logs, services, net, gpu, disk: see what your PC is doing and why something fails

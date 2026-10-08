@@ -13,6 +13,8 @@ case "${1:-}" in
   --ensure) ensure_only=1; shift ;;
 esac
 f="${1:-}"
+[ "$#" -gt 0 ] && shift
+EXTRA=("$@")          # extra arguments for the program (from the EXE Center settings)
 
 if [ "$(uname -m)" != x86_64 ]; then
   kdialog --title "$T" --icon rustos --msgbox "Windows .exe programs need an Intel or AMD (x86) PC.<br>This is the ARM edition of RustOS, so they cannot run here.<br><br>Look for a Linux version of the program, or use its website."
@@ -95,7 +97,7 @@ ensure_wine || exit 1
 prepare_prefix
 
 cd "$(dirname "$f")" || true
-export WINEDEBUG=-all
+export WINEDEBUG="${RUSTOS_WINEDEBUG:--all}"   # the EXE Center sets this to show Wine errors in its log
 launch=(wine)
 if [ "$game" = 1 ]; then
   command -v gamemoderun >/dev/null 2>&1 && launch=(gamemoderun "${launch[@]}")
@@ -103,8 +105,8 @@ if [ "$game" = 1 ]; then
 fi
 
 case "${f,,}" in
-  *.msi)        exec "${launch[@]}" msiexec /i "$f" ;;
+  *.msi)        exec "${launch[@]}" msiexec /i "$f" "${EXTRA[@]}" ;;
   *.bat|*.cmd)  exec "${launch[@]}" cmd /c "$f" ;;
-  *.lnk)        exec "${launch[@]}" start /unix "$f" ;;
-  *)            exec "${launch[@]}" "$f" ;;
+  *.lnk)        exec "${launch[@]}" start /unix "$f" "${EXTRA[@]}" ;;
+  *)            exec "${launch[@]}" "$f" "${EXTRA[@]}" ;;
 esac

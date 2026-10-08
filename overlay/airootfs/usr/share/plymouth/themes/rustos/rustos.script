@@ -1,0 +1,148 @@
+# RustOS boot screen (Plymouth "script" theme)
+# Dark ink background, the RustOS logo over a slowly breathing rust glow, the name, and a thin progress bar.
+# Also handles the disk password prompt and boot messages.
+
+Window.SetBackgroundTopColor(0.071, 0.114, 0.102);
+Window.SetBackgroundBottomColor(0.035, 0.060, 0.053);
+
+sw = Window.GetWidth();
+sh = Window.GetHeight();
+ox = Window.GetX();
+oy = Window.GetY();
+cx = ox + sw / 2;
+cy = oy + sh / 2 - sh / 14;
+
+# scale everything to the screen (designed for 1080 pixels tall)
+k = sh / 1080;
+if (k < 0.6) k = 0.6;
+if (k > 2) k = 2;
+
+glow_img = Image("glow.png");
+glow_img = glow_img.Scale(glow_img.GetWidth() * k, glow_img.GetHeight() * k);
+glow = Sprite(glow_img);
+glow.SetPosition(cx - glow_img.GetWidth() / 2, cy - glow_img.GetHeight() / 2, 0);
+glow.SetOpacity(0);
+
+logo_img = Image("logo.png");
+logo_img = logo_img.Scale(logo_img.GetWidth() * k, logo_img.GetHeight() * k);
+logo = Sprite(logo_img);
+logo_x = cx - logo_img.GetWidth() / 2;
+logo_y = cy - logo_img.GetHeight() / 2;
+logo.SetPosition(logo_x, logo_y, 2);
+logo.SetOpacity(0);
+
+word_img = Image("word.png");
+word_img = word_img.Scale(word_img.GetWidth() * k * 0.75, word_img.GetHeight() * k * 0.75);
+word = Sprite(word_img);
+word.SetPosition(cx - word_img.GetWidth() / 2, logo_y + logo_img.GetHeight() + 26 * k, 2);
+word.SetOpacity(0);
+
+bar_bg_img = Image("bar-bg.png");
+bar_bg_img = bar_bg_img.Scale(bar_bg_img.GetWidth() * k, bar_bg_img.GetHeight() * k);
+bar_fg_src = Image("bar-fg.png");
+bar_w = bar_bg_img.GetWidth();
+bar_h = bar_bg_img.GetHeight();
+bar_x = cx - bar_w / 2;
+bar_y = oy + sh * 0.78;
+bar_bg = Sprite(bar_bg_img);
+bar_bg.SetPosition(bar_x, bar_y, 3);
+bar_bg.SetOpacity(0);
+bar_fg = Sprite();
+bar_fg.SetPosition(bar_x, bar_y, 4);
+
+msg = Sprite();
+msg.SetPosition(cx, bar_y + 30 * k, 5);
+
+time = 0;
+shown = 0;
+progress = 0;
+
+fun refresh_callback ()
+{
+  global.time = global.time + 1;
+  t = global.time;
+  # fade in over the first second
+  a = t / 50;
+  if (a > 1) a = 1;
+  logo.SetOpacity(a);
+  word.SetOpacity(a);
+  bar_bg.SetOpacity(a);
+  # the glow breathes slowly
+  glow.SetOpacity(a * (0.55 + 0.25 * Math.Sin(t / 40)));
+  # the logo floats a little
+  logo.SetY(logo_y + Math.Sin(t / 55) * 4 * k);
+  # smooth progress bar
+  global.shown = global.shown + (global.progress - global.shown) * 0.08;
+  w = Math.Int(bar_w * global.shown);
+  if (w < 2) w = 2;
+  bar_fg.SetImage(bar_fg_src.Scale(w, bar_h));
+  bar_fg.SetOpacity(a);
+}
+Plymouth.SetRefreshFunction(refresh_callback);
+
+fun boot_progress_callback (duration, value)
+{
+  if (value > global.progress) global.progress = value;
+}
+Plymouth.SetBootProgressFunction(boot_progress_callback);
+
+fun message_callback (text)
+{
+  img = Image.Text(text, 0.66, 0.72, 0.69, 1, "Sans 12");
+  msg.SetImage(img);
+  msg.SetX(cx - img.GetWidth() / 2);
+}
+Plymouth.SetMessageFunction(message_callback);
+
+# ---- disk password (encrypted disks)
+box_img = Image("box.png");
+field_img = Image("field.png");
+bullet_img = Image("bullet.png");
+box = Sprite(box_img);
+box.SetPosition(cx - box_img.GetWidth() / 2, bar_y - 150 * k, 10);
+box.SetOpacity(0);
+field = Sprite(field_img);
+field.SetPosition(cx - field_img.GetWidth() / 2, bar_y - 150 * k + 58, 11);
+field.SetOpacity(0);
+prompt = Sprite();
+prompt.SetPosition(cx - box_img.GetWidth() / 2 + 30, bar_y - 150 * k + 20, 11);
+
+fun display_password_callback (prompt_text, count)
+{
+  box.SetOpacity(1);
+  field.SetOpacity(1);
+  bar_bg.SetOpacity(0);
+  bar_fg.SetOpacity(0);
+  pimg = Image.Text(prompt_text, 0.91, 0.93, 0.91, 1, "Sans 13");
+  prompt.SetImage(pimg);
+  prompt.SetOpacity(1);
+  i = 0;
+  while (i < 32)
+  {
+    if (!global.bullets[i]) global.bullets[i] = Sprite(bullet_img);
+    global.bullets[i].SetPosition(cx - field_img.GetWidth() / 2 + 16 + i * 18, bar_y - 150 * k + 58 + 15, 12);
+    if (i < count) global.bullets[i].SetOpacity(1); else global.bullets[i].SetOpacity(0);
+    i = i + 1;
+  }
+}
+Plymouth.SetDisplayPasswordFunction(display_password_callback);
+
+fun display_normal_callback ()
+{
+  box.SetOpacity(0);
+  field.SetOpacity(0);
+  prompt.SetOpacity(0);
+  i = 0;
+  while (i < 32)
+  {
+    if (global.bullets[i]) global.bullets[i].SetOpacity(0);
+    i = i + 1;
+  }
+}
+Plymouth.SetDisplayNormalFunction(display_normal_callback);
+
+fun quit_callback ()
+{
+  logo.SetOpacity(1);
+}
+Plymouth.SetQuitFunction(quit_callback);

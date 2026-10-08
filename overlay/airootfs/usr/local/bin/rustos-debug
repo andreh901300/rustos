@@ -54,10 +54,20 @@ ${B}Look around${R}
   $ME gpu               graphics card and driver
   $ME disk              disk space and the biggest folders in your home
   $ME report            save everything above into one text file to share (no passwords in it)
+  $ME boot              how long the start takes, and what is slow
+  $ME temp              temperatures         $ME battery    battery level and health
+  $ME top               what uses the CPU and memory      $ME watch   live view (q stops)
+  $ME wine              Windows programs: Wine, the EXE Center, what is running
+  $ME packages          how many packages, which are not needed     $ME history   last installs and updates
+  $ME restore           restore points (undo an update)
+  $ME usb | display | sound | bluetooth | ports | env | crash   details for each
+  $ME speed             internet speed test   $ME bench   quick CPU and disk test
+  $ME clean             free up disk space (old packages, unused parts, caches)
 
 ${B}Fix things${R}
   $ME fix               list the quick fixes
-  $ME fix <name>        run one: plasma | audio | network | pacman-lock | keyring | ipad | flatpak
+  $ME fix <name>        run one: plasma | audio | network | dns | time | pacman-lock | keyring | ipad |
+                        flatpak | fonts | icons | initramfs | grub | bootsplash | mirrors | exe
 
 ${B}Mods (custom tweaks you can turn on and off)${R}
   $ME mainmod           the main mod menu: pick a number to turn a mod on or off
@@ -184,12 +194,216 @@ cmd_report() {
   {
     echo "RustOS debug report, $(date)"
     NO_COLOR=1 "$0" info; NO_COLOR=1 "$0" update; NO_COLOR=1 "$0" services; NO_COLOR=1 "$0" net; NO_COLOR=1 "$0" gpu; NO_COLOR=1 "$0" disk
-    NO_COLOR=1 "$0" mods
+    NO_COLOR=1 "$0" mods; NO_COLOR=1 "$0" boot; NO_COLOR=1 "$0" wine; NO_COLOR=1 "$0" packages; NO_COLOR=1 "$0" history 40
     echo; echo "== Errors since this start =="; journalctl -b -p err --no-pager -n 150 2>/dev/null
     echo; echo "== Update log =="; tail -n 80 /var/log/rustos-update.log 2>/dev/null
   } > "$f" 2>&1
   ok "Saved: $f"
   info "Send that file when you ask for help (Discord). It has no passwords in it."
+}
+
+# ------------------------------------------------------------------ more (RustOS 2.9)
+cmd_boot() {
+  title "Start-up"
+  have systemd-analyze && kv "Start time" "$(systemd-analyze 2>/dev/null | head -n1 | sed 's/^Startup finished in //')"
+  kv "Boot loader" "$(boot_loader)"
+  have rustos-bootsplash && kv "Boot screen" "$(rustos-bootsplash status 2>/dev/null | head -n1 | sed 's/^Boot screen: //')"
+  kv "Kernel options" "$(cut -c1-90 /proc/cmdline 2>/dev/null)"
+  title "Slowest parts of the start"
+  have systemd-analyze && systemd-analyze blame --no-pager 2>/dev/null | head -n 10 | sed 's/^/  /'
+}
+
+cmd_temp() {
+  title "Temperatures"
+  if have sensors; then sensors 2>/dev/null | grep -E '°C' | sed 's/^/  /' | head -n 20
+  else
+    local z t n
+    for z in /sys/class/thermal/thermal_zone*; do
+      [ -r "$z/temp" ] || continue
+      t=$(cat "$z/temp"); n=$(cat "$z/type" 2>/dev/null)
+      kv "${n:-zone}" "$((t / 1000)) °C"
+    done
+    info "More detail: install lm_sensors (RustOS Apps, Tools) and run: sudo sensors-detect"
+  fi
+}
+
+cmd_battery() {
+  title "Battery"
+  local b found=0
+  for b in /sys/class/power_supply/BAT*; do
+    [ -d "$b" ] || continue; found=1
+    kv "${b##*/}" "$(cat "$b/capacity" 2>/dev/null)%  ($(cat "$b/status" 2>/dev/null))"
+    if [ -r "$b/energy_full" ] && [ -r "$b/energy_full_design" ]; then
+      kv "Health" "$(( $(cat "$b/energy_full") * 100 / $(cat "$b/energy_full_design") ))% of new"
+    elif [ -r "$b/charge_full" ] && [ -r "$b/charge_full_design" ]; then
+      kv "Health" "$(( $(cat "$b/charge_full") * 100 / $(cat "$b/charge_full_design") ))% of new"
+    fi
+    [ -r "$b/cycle_count" ] && kv "Charge cycles" "$(cat "$b/cycle_count")"
+  done
+  [ "$found" = 1 ] || info "No battery (a desktop PC or a virtual machine)"
+  have powerprofilesctl && kv "Power mode" "$(powerprofilesctl get 2>/dev/null)"
+}
+
+cmd_top() {
+  title "Using the most CPU"
+  ps -eo pcpu,pmem,comm --sort=-pcpu 2>/dev/null | head -n 8 | sed 's/^/  /'
+  title "Using the most memory"
+  ps -eo pmem,rss,comm --sort=-rss 2>/dev/null | head -n 8 | awk 'NR==1{print "  " $0; next} {printf "  %5s %7.0f MB %s\n", $1, $2/1024, $3}'
+  kv "Load" "$(cut -d' ' -f1-3 /proc/loadavg)  (on $(nproc) cores)"
+}
+
+cmd_usb() {
+  title "USB devices"
+  if have lsusb; then lsusb 2>/dev/null | sed 's/^Bus [0-9]* Device [0-9]*: ID /  /'; else bad "lsusb is missing (package usbutils)"; fi
+}
+
+cmd_ports() {
+  title "Programs listening on the network"
+  ss -tulpn 2>/dev/null | awk 'NR==1 || /LISTEN|UNCONN/' | head -n 25 | sed 's/^/  /'
+  info "Nothing here should surprise you. Ask in the Discord if something looks odd."
+}
+
+cmd_wine() {
+  title "Windows programs (Wine)"
+  local pfx="${WINEPREFIX:-$HOME/.wine}"
+  if have wine; then kv "Wine" "$(wine --version 2>/dev/null)"; else bad "Wine is not installed (double-click an .exe and RustOS offers it)"; fi
+  if [ -d "$pfx/drive_c" ]; then
+    kv "Environment" "$pfx ($(du -sh "$pfx" 2>/dev/null | cut -f1))"
+    [ -f "$pfx/drive_c/windows/system32/dxgi.dll" ] && grep -qa dxvk "$pfx/drive_c/windows/system32/dxgi.dll" 2>/dev/null && ok "DXVK is installed"
+  else info "No Windows environment yet (it is made the first time you run a program)"; fi
+  kv "EXE Center folder" "$HOME/EXE-Center"
+  have winetricks && kv "Added with winetricks" "$(winetricks list-installed 2>/dev/null | tr '\n' ' ' | cut -c1-80)"
+  local running
+  # shellcheck disable=SC2009
+  running=$(ps -u "$(id -u)" -o args= 2>/dev/null | grep -oiE '^([A-Za-z]:\\.*|/[^ ]*)\.exe' | sed 's/.*[\\/]//' | grep -viE '^(wineserver|services|winedevice|explorer|plugplay|svchost|rpcss|conhost|start)\.exe$' | sort -u | tr '\n' ' ')
+  kv "Running now" "${running:-nothing}"
+  if python3 -c 'import PyQt6.QtWidgets' 2>/dev/null; then ok "EXE Center window can start"; else bad "PyQt6 is missing: the EXE Center uses the classic menu (.debug fix exe)"; fi
+  [ -s "$HOME/.cache/rustos-exe-center/window.log" ] && info "EXE Center window errors: $HOME/.cache/rustos-exe-center/window.log"
+}
+
+cmd_packages() {
+  title "Packages"
+  kv "Installed" "$(pacman -Qq 2>/dev/null | wc -l)"
+  kv "You installed" "$(pacman -Qqe 2>/dev/null | wc -l) (the rest came along as needed)"
+  local orph; orph=$(pacman -Qtdq 2>/dev/null | wc -l)
+  kv "Not needed any more" "$orph  ${orph:+(remove with: .debug clean)}"
+  have flatpak && kv "Flatpak apps" "$(flatpak list --app 2>/dev/null | wc -l)"
+  kv "Cache" "$(du -sh /var/cache/pacman/pkg 2>/dev/null | cut -f1)"
+}
+
+cmd_history() {
+  title "Last package changes"
+  grep -E '\[ALPM\] (installed|upgraded|removed)' /var/log/pacman.log 2>/dev/null | tail -n "${1:-20}" | sed -E 's/^\[([0-9T:-]+)[^]]*\] \[ALPM\] /  \1  /'
+}
+
+cmd_restore() {
+  title "Restore points (undo an update)"
+  local f n=0
+  for f in $(ls -1t /var/lib/rustos/restorepoints/*.list 2>/dev/null | head -n 8); do
+    n=$((n + 1)); kv "$(date -r "$f" '+%a %d %b %H:%M')" "$(wc -l < "$f") packages saved"
+  done
+  [ "$n" -gt 0 ] || info "No restore points yet (one is saved before every update)"
+  info "Go back with: sudo rustos-rollback   (or Update Center, Undo the last update)"
+}
+
+cmd_clean() {
+  title "Clean up"
+  local before; before=$(df --output=avail -B1M / | tail -n1)
+  if have paccache; then need_root paccache -rk1 >/dev/null && ok "Old package versions removed (kept the newest)"; fi
+  local orph; orph=$(pacman -Qtdq 2>/dev/null)
+  if [ -n "$orph" ]; then
+    echo "  These are not needed by anything any more:"; echo "$orph" | sed 's/^/    /' | head -n 20
+    read -r -p "  Remove them? [y/N] " a
+    case "$a" in y|Y) # shellcheck disable=SC2086
+      need_root pacman -Rns --noconfirm $orph && ok "Removed" ;; esac
+  fi
+  have flatpak && flatpak uninstall --unused -y >/dev/null 2>&1 && ok "Unused Flatpak parts removed"
+  need_root journalctl --vacuum-size=100M >/dev/null 2>&1 && ok "System log trimmed to 100 MB"
+  rm -rf "$HOME/.cache/thumbnails" && ok "Thumbnail cache cleared"
+  local after; after=$(df --output=avail -B1M / | tail -n1)
+  info "Freed about $(( after - before )) MB"
+}
+
+cmd_speed() {
+  title "Internet speed"
+  have curl || { bad "curl is missing"; return 1; }
+  info "Downloading 25 MB from Cloudflare..."
+  local bps
+  bps=$(curl -o /dev/null -s -w '%{speed_download}' --max-time 30 'https://speed.cloudflare.com/__down?bytes=25000000' 2>/dev/null)
+  if [ -n "$bps" ] && [ "${bps%.*}" -gt 0 ] 2>/dev/null; then
+    kv "Download" "$(awk -v b="$bps" 'BEGIN{printf "%.1f Mbit/s", b*8/1000000}')"
+  else bad "The test did not work (offline?)"; fi
+  kv "Ping" "$(ping -c 3 -q 1.1.1.1 2>/dev/null | awk -F/ '/rtt|round-trip/{print $5 " ms"}')"
+}
+
+cmd_bench() {
+  title "Quick benchmark"
+  info "CPU: hashing 1 GB..."
+  local s e
+  s=$(date +%s%N); head -c 1073741824 /dev/zero | sha256sum >/dev/null; e=$(date +%s%N)
+  kv "CPU (1 core)" "$(( (e - s) / 1000000 )) ms  (lower is faster)"
+  info "Disk: writing 512 MB..."
+  local f; f=$(mktemp -p "${TMPDIR:-$HOME}" rustos-bench.XXXX)
+  s=$(date +%s%N); dd if=/dev/zero of="$f" bs=1M count=512 conv=fdatasync status=none 2>/dev/null; e=$(date +%s%N)
+  rm -f "$f"
+  kv "Disk write" "$(( 512 * 1000 / ( (e - s) / 1000000 + 1 ) )) MB/s"
+}
+
+cmd_watch() {
+  [ -t 1 ] || { cmd_top; return; }
+  local k
+  while :; do
+    clear
+    printf '%s%sRustOS live%s  %s(press q to stop)%s\n' "$B" "$OR" "$R" "$D" "$R"
+    kv "CPU load" "$(cut -d' ' -f1-3 /proc/loadavg)  ($(nproc) cores)"
+    kv "Memory" "$(free -h | awk '/^Mem:/{print $3 " of " $2}')"
+    local t; t=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null); [ -n "$t" ] && kv "Temperature" "$((t / 1000)) °C"
+    for b in /sys/class/power_supply/BAT*; do [ -r "$b/capacity" ] && kv "Battery" "$(cat "$b/capacity")% ($(cat "$b/status"))"; done
+    echo; ps -eo pcpu,pmem,comm --sort=-pcpu | head -n 11 | sed 's/^/  /'
+    read -r -t 2 -n 1 k && [ "$k" = q ] && { echo; return 0; }
+  done
+}
+
+cmd_crash() {
+  title "Programs that crashed"
+  if have coredumpctl; then coredumpctl list --no-pager -r 2>/dev/null | head -n 12 | sed 's/^/  /' || ok "No crashes saved"
+  else info "coredumpctl is not available"; fi
+}
+
+cmd_env() {
+  title "Session"
+  kv "User" "$USER (groups: $(id -nG | tr ' ' ','))"
+  kv "Shell" "$SHELL"
+  kv "Session" "${XDG_SESSION_TYPE:-?} / ${XDG_CURRENT_DESKTOP:-?}"
+  kv "Language" "${LANG:-?}"
+  kv "Keyboard" "$(localectl status 2>/dev/null | awk -F': ' '/X11 Layout/{print $2}')"
+  kv "Time zone" "$(timedatectl show -p Timezone --value 2>/dev/null)"
+  kv "Clock synced" "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)"
+}
+
+cmd_display() {
+  title "Screens"
+  if have kscreen-doctor; then kscreen-doctor -o 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -E 'Output|enabled|Modes|Geometry|Scale' | head -n 20 | sed 's/^/  /'
+  else xrandr --current 2>/dev/null | grep -E ' connected|\*' | sed 's/^/  /'; fi
+}
+
+cmd_sound() {
+  title "Sound"
+  if have pactl; then
+    kv "Server" "$(pactl info 2>/dev/null | awk -F': ' '/Server Name/{print $2}')"
+    kv "Output" "$(pactl get-default-sink 2>/dev/null)"
+    kv "Volume" "$(pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | grep -oE '[0-9]+%' | head -n1)  muted: $(pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null | awk '{print $2}')"
+    kv "Input" "$(pactl get-default-source 2>/dev/null)"
+  else bad "pactl is missing"; fi
+  info "No sound? Try: $ME fix audio"
+}
+
+cmd_bluetooth() {
+  title "Bluetooth"
+  if ! have bluetoothctl; then bad "Bluetooth tools are not installed"; return; fi
+  kv "Service" "$(systemctl is-active bluetooth 2>/dev/null)"
+  bluetoothctl show 2>/dev/null | grep -E 'Powered|Discoverable|Name' | sed 's/^\s*/  /'
+  echo "  Paired:"; bluetoothctl devices Paired 2>/dev/null | sed 's/^Device /    /'
 }
 
 # ------------------------------------------------------------------ fixes
@@ -205,6 +419,15 @@ cmd_fix() {
   $ME fix keyring       "signature is invalid / unknown trust": refresh the package keys
   $ME fix ipad          stuck in iPad mode: put the normal desktop back
   $ME fix flatpak       Flatpak apps broken: repair and update them
+  $ME fix dns           websites do not open but the network is up
+  $ME fix time          the clock is wrong
+  $ME fix fonts         letters look wrong or are missing: rebuild the font list
+  $ME fix icons         icons missing or wrong in the menu: rebuild the menu cache
+  $ME fix initramfs     rebuild the start-up files (after a driver problem)
+  $ME fix grub          rebuild the GRUB boot menu (Windows missing from it?)
+  $ME fix bootsplash    the boot screen causes trouble: turn it off
+  $ME fix mirrors       downloads are slow: pick the fastest package servers
+  $ME fix exe           the EXE Center window does not open: reinstall what it needs
 EOF
       ;;
     plasma)
@@ -230,13 +453,35 @@ EOF
     flatpak)
       have flatpak || { bad "Flatpak is not installed"; return 1; }
       flatpak repair --user 2>/dev/null; need_root flatpak repair; flatpak update -y && ok "Flatpak repaired" ;;
+    dns)
+      need_root systemctl restart NetworkManager; resolvectl flush-caches 2>/dev/null
+      if getent hosts archlinux.org >/dev/null; then ok "Names work again"; else bad "Still no DNS. Try another network, or set DNS 1.1.1.1 in the network settings."; fi ;;
+    time)
+      need_root timedatectl set-ntp true && ok "Clock sync is on" && sleep 2 && kv "Synced" "$(timedatectl show -p NTPSynchronized --value)" ;;
+    fonts)
+      fc-cache -f >/dev/null 2>&1 && ok "Font list rebuilt. Restart your apps." ;;
+    icons)
+      rm -f "$HOME"/.cache/icon-cache.kcache "$HOME"/.cache/ksycoca6_* 2>/dev/null
+      kbuildsycoca6 --noincremental >/dev/null 2>&1; ok "Menu and icon cache rebuilt" ;;
+    initramfs)
+      need_root mkinitcpio -P && ok "Start-up files rebuilt" ;;
+    grub)
+      [ -f /etc/default/grub ] || { bad "This PC does not use GRUB"; return 1; }
+      need_root grub-mkconfig -o /boot/grub/grub.cfg && ok "GRUB menu rebuilt (it looks for Windows too)" ;;
+    bootsplash)
+      have rustos-bootsplash && need_root rustos-bootsplash off ;;
+    mirrors)
+      [ "$(uname -m)" = x86_64 ] || { bad "Only for PCs (ARM uses its own servers)"; return 1; }
+      need_root reflector --save /etc/pacman.d/mirrorlist --protocol https --latest 20 --sort rate && ok "Fastest servers picked" ;;
+    exe)
+      need_root pacman -S --needed --noconfirm python-pyqt6 icoutils && ok "Done. Open RustOS EXE Center again." ;;
     *) bad "Unknown fix: $1"; cmd_fix; return 1 ;;
   esac
 }
 
 # ------------------------------------------------------------------ mods
 # Built-in mods. Each has: desc, on, off, state (prints on/off).
-BUILTIN="dark noanim accent prompt nobanner ipad autoupdate devtools"
+BUILTIN="dark noanim accent prompt nobanner ipad autoupdate devtools bootsplash"
 
 block_add() {   # block_add NAME "lines" [top]
   block_del "$1"
@@ -263,6 +508,7 @@ mod_desc() {
     ipad)       echo "iPad mode: dock, app grid, touch keyboard" ;;
     autoupdate) echo "Automatic updates every day" ;;
     devtools)   echo "Programming tools: gcc, make, git, base-devel (installs them)" ;;
+    bootsplash) echo "RustOS boot screen (logo and progress bar while the PC starts)" ;;
   esac
 }
 mod_state() {
@@ -275,6 +521,7 @@ mod_state() {
     ipad)       have rustos-ipad-mode && rustos-ipad-mode status 2>/dev/null | grep -q '^on' && echo on || echo off ;;
     autoupdate) systemctl is-enabled --quiet rustos-update.timer 2>/dev/null && echo on || echo off ;;
     devtools)   pacman -Qq base-devel >/dev/null 2>&1 && pacman -Qq git >/dev/null 2>&1 && echo on || echo off ;;
+    bootsplash) have rustos-bootsplash && rustos-bootsplash status 2>/dev/null | grep -q ': ON' && echo on || echo off ;;
   esac
 }
 mod_set() {   # mod_set NAME on|off [arg]
@@ -298,6 +545,8 @@ mod_set() {   # mod_set NAME on|off [arg]
     autoupdate:on)  rustos-autoupdate on ;;
     autoupdate:off) rustos-autoupdate off ;;
     devtools:on)    need_root pacman -S --needed --noconfirm base-devel git ;;
+    bootsplash:on)  need_root rustos-bootsplash on ;;
+    bootsplash:off) need_root rustos-bootsplash off ;;
     devtools:off)   info "The tools stay installed (other apps may need them). Remove them by hand: sudo pacman -Rns base-devel"; return 0 ;;
     *) return 2 ;;
   esac
@@ -436,6 +685,25 @@ case "$sub" in
   mods)               cmd_mods ;;
   mod)                cmd_mod "$@" ;;
   mainmod|menu)       cmd_mainmod ;;
+  boot)               cmd_boot ;;
+  temp|temps)         cmd_temp ;;
+  battery|bat)        cmd_battery ;;
+  top)                cmd_top ;;
+  usb)                cmd_usb ;;
+  ports)              cmd_ports ;;
+  wine|exe)           cmd_wine ;;
+  packages|pkgs)      cmd_packages ;;
+  history)            cmd_history "$@" ;;
+  restore)            cmd_restore ;;
+  clean)              cmd_clean ;;
+  speed)              cmd_speed ;;
+  bench)              cmd_bench ;;
+  watch|live)         cmd_watch ;;
+  crash|crashes)      cmd_crash ;;
+  env)                cmd_env ;;
+  display|screens)    cmd_display ;;
+  sound|audio)        cmd_sound ;;
+  bluetooth|bt)       cmd_bluetooth ;;
   _names)             all_mods ;;          # for tab completion
   *) bad "Unknown command: $sub"; echo "  Type:  $ME help"; exit 1 ;;
 esac

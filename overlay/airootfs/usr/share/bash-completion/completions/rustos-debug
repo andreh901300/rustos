@@ -2,10 +2,10 @@
 _rustos_debug() {
   local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD-1]} w=""
   case $COMP_CWORD in
-    1) w="help info update logs services net gpu disk report fix mods mod mainmod version" ;;
+    1) w="help info update logs services net gpu disk report fix mods mod mainmod version boot temp battery top usb ports wine packages history restore clean speed bench watch crash env display sound bluetooth" ;;
     2) case $prev in
          logs) w="boot last kernel update" ;;
-         fix)  w="plasma audio network pacman-lock keyring ipad flatpak" ;;
+         fix)  w="plasma audio network dns time pacman-lock keyring ipad flatpak fonts icons initramfs grub bootsplash mirrors exe" ;;
          mod)  w="new edit delete $(rustos-debug _names 2>/dev/null | tr '\n' ' ')" ;;
        esac ;;
     3) [ "${COMP_WORDS[1]}" = mod ] && case $prev in new) w="" ;; edit|delete) w="$(ls ~/.config/rustos/mods 2>/dev/null | sed 's/\.sh$//')" ;; *) w="on off toggle status" ;; esac ;;

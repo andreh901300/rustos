@@ -268,6 +268,19 @@ In a terminal type `.debug help`. It is `/usr/local/bin/rustos-debug` (`.debug` 
   `~/.config/rustos/mods/<name>.sh` with `on()` and `off()` functions (and an optional `state()`).
   Terminal mods add marked blocks to `~/.bashrc` (`# >>> rustos-mod:NAME >>>`) and remove them exactly on `off`.
 
+## EXE Center app and boot screen (2.9)
+
+- **EXE Center** is now a PyQt6 app: `/usr/share/rustos/exe-center/exe_center.py` (window) and `exe_core.py` (logic, no Qt;
+  `python3 exe_core.py selftest`). `rustos-exe-center` starts it and falls back to the classic kdialog menu if it cannot start
+  (errors go to `~/.cache/rustos-exe-center/window.log`); `rustos-exe-center --classic` forces the old menu. Program icons come
+  from the .exe itself (icoutils). Settings per program: `~/.config/rustos/exe-center.json`. Needs `python-pyqt6` and `icoutils`
+  (in packages-extra; `.debug fix exe` installs them).
+- **Boot screen**: Plymouth theme `usr/share/plymouth/themes/rustos/` (script theme, images made from the logo) and a GRUB
+  background `usr/share/rustos/grub-background.png`. `rustos-bootsplash on|off|status|preview` adds/removes the `plymouth`
+  hook and the `splash` kernel option for GRUB, systemd-boot, Limine and rEFInd, and rebuilds the initramfs; if anything fails
+  it puts everything back. The pacman hook `rustos-bootsplash.hook` turns it on once after an update (PCs installed with the
+  RustOS installer only, never on ARM); new installs get it from the installer.
+
 ## The website and the repository page
 
 The website (`rustos-site`, PHP) is a RustOS desktop: the fastfetch window can be dragged, there is a custom cursor, an

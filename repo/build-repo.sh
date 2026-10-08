@@ -22,7 +22,7 @@ put() { # put <mode> <source> <destination-in-package>
 }
 for f in neofetch rustos-branding rustos-first-login rustos-update rustos-autoupdate rustos-bootloader-update \
          rustos-update-event rustos-update-notify rustos-update-center rustos-gaming \
-         rustos-restorepoint rustos-rollback rustos-run-exe rustos-apps rustos-switch rustos-education rustos-antivirus rustos-exe-center rustos-ipad-mode rustos-debug; do
+         rustos-restorepoint rustos-rollback rustos-run-exe rustos-apps rustos-switch rustos-education rustos-antivirus rustos-exe-center rustos-ipad-mode rustos-debug rustos-bootsplash; do
   put 755 "$OV/usr/local/bin/$f" "usr/local/bin/$f"
 done
 put 644 "$OV/etc/systemd/system/rustos-update.service" etc/systemd/system/rustos-update.service
@@ -53,6 +53,10 @@ put 644 "$OV/etc/sddm.conf.d/rustos-touch.conf"                   etc/sddm.conf.
 ln -s rustos-debug "$P/usr/local/bin/.debug"          # ".debug help" in a terminal
 put 644 "$OV/usr/share/bash-completion/completions/rustos-debug"   usr/share/bash-completion/completions/rustos-debug
 put 644 "$OV/usr/share/bash-completion/completions/rustos-debug"   usr/share/bash-completion/completions/.debug
+for f in exe_core.py exe_center.py; do put 644 "$OV/usr/share/rustos/exe-center/$f" "usr/share/rustos/exe-center/$f"; done
+for f in "$OV"/usr/share/plymouth/themes/rustos/*; do put 644 "$f" "usr/share/plymouth/themes/rustos/${f##*/}"; done
+put 644 "$OV/usr/share/rustos/grub-background.png"            usr/share/rustos/grub-background.png
+put 644 "$OV/etc/pacman.d/hooks/rustos-bootsplash.hook"        etc/pacman.d/hooks/rustos-bootsplash.hook
 put 644 "$OV/usr/share/rustos/apps.catalog"                         usr/share/rustos/apps.catalog
 put 644 "$OV/usr/share/rustos/wallpapers/ipad.svg"                  usr/share/rustos/wallpapers/ipad.svg
 put 755 "$OV/usr/share/kio/servicemenus/rustos-scan-virus.desktop" usr/share/kio/servicemenus/rustos-scan-virus.desktop
@@ -77,7 +81,7 @@ put 644 branding/logo.svg     usr/share/icons/hicolor/scalable/apps/rustos.svg
 # Windows line endings would break the scripts
 find "$P" -type f \( -path '*/usr/local/bin/*' -o -name '*.hook' -o -name '*.service' -o -name '*.timer' \
   -o -name '*.desktop' -o -name '*.jsonc' -o -name 'os-release' -o -name '*.path' -o -name '*.rules' \
-  -o -name '*.conf' -o -name 'baloofilerc' -o -name 'CHANGELOG.txt' -o -name 'mimeapps.list' -o -name 'windows-equivalents.txt' -o -name 'apps.catalog' -o -path '*/bash-completion/*' \) -exec sed -i 's/\r$//' {} +
+  -o -name '*.conf' -o -name 'baloofilerc' -o -name 'CHANGELOG.txt' -o -name 'mimeapps.list' -o -name 'windows-equivalents.txt' -o -name 'apps.catalog' -o -path '*/bash-completion/*' -o -name '*.py' -o -name '*.script' -o -name '*.plymouth' \) -exec sed -i 's/\r$//' {} +
 
 # ---------------------------------------------------------------- PKGBUILD
 BASEV="$(tr -d ' \r\n' < VERSION)"

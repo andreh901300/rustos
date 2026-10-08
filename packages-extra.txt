@@ -118,6 +118,11 @@ gvfs-mtp
 kcalc
 filelight
 
+# --- EXE Center app and boot screen ---
+python-pyqt6
+icoutils
+plymouth
+
 # --- touchscreen, on-screen keyboard, iPad mode ---
 maliit-keyboard
 maliit-framework

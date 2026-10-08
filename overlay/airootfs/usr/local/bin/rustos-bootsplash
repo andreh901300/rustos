@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# RustOS boot screen (Plymouth) and boot menu background (GRUB).
+#   rustos-bootsplash on        RustOS logo + progress bar while the PC starts
+#   rustos-bootsplash off       back to the plain text boot
+#   rustos-bootsplash status    is it on?
+#   rustos-bootsplash preview   show the boot screen for 6 seconds right now
+#   rustos-bootsplash auto      used by updates: turns it on once, only where it is safe
+# It changes: the initramfs hooks (adds "plymouth"), the kernel options (adds "splash"), and for GRUB the menu background.
+# Turning it off undoes exactly those changes.
+set -u
+THEME=rustos
+CONF=/etc/mkinitcpio.conf
+MARK=/var/lib/rustos/bootsplash-auto
+GRUBBG=/usr/share/rustos/grub-background.png
+QUIET=0
+for a in "$@"; do [ "$a" = --quiet ] && QUIET=1; done
+say() { [ "$QUIET" = 1 ] || echo "$*"; }
+die() { echo "rustos-bootsplash: $*" >&2; exit 1; }
+
+cmd=${1:-status}
+if [ "$cmd" != status ] && [ "$(id -u)" != 0 ]; then exec sudo "$0" "$@"; fi
+
+BOOTLOADER=""
+# shellcheck disable=SC1091
+[ -r /etc/rustos/bootloader.conf ] && . /etc/rustos/bootloader.conf
+if [ -z "$BOOTLOADER" ]; then
+  if [ -f /etc/default/grub ] && [ -f /boot/grub/grub.cfg ]; then BOOTLOADER=grub
+  elif [ -d /boot/loader/entries ]; then BOOTLOADER=systemd-boot
+  fi
+fi
+
+# every file that defines HOOKS (the main file and drop-ins)
+hook_files() { grep -l '^HOOKS=' "$CONF" /etc/mkinitcpio.conf.d/*.conf 2>/dev/null; }
+hooks_have() { grep -qE '^HOOKS=\(.*\bplymouth\b' "$@"; }
+
+add_hook() {
+  local f
+  for f in $(hook_files); do
+    hooks_have "$f" && continue
+    cp -p "$f" "$f.rustos-bak"
+    if grep -qE '^HOOKS=\(.*\bsystemd\b' "$f"; then
+      sed -i -E '/^HOOKS=/ s/\bsystemd\b/systemd plymouth/' "$f"
+    elif grep -qE '^HOOKS=\(.*\budev\b' "$f"; then
+      sed -i -E '/^HOOKS=/ s/\budev\b/udev plymouth/' "$f"
+    else
+      sed -i -E '/^HOOKS=/ s/\bbase\b/base plymouth/' "$f"
+    fi
+  done
+}
+del_hook() {
+  local f
+  for f in $(hook_files); do sed -i -E '/^HOOKS=/ s/ plymouth\b//' "$f"; done
+}
+
+# add/remove "splash" right after "quiet" (or at the end) on kernel option lines
+add_word() { # add_word FILE LINE-REGEX
+  grep -qE "$2" "$1" 2>/dev/null || return 0
+  sed -i -E "/$2/ { /\bsplash\b/! { s/\bquiet\b/quiet splash/; t; s/(\"?)\s*\$/ splash\1/ } }" "$1"
+}
+del_word() { [ -f "$1" ] && sed -i -E "/$2/ s/ splash\b//g" "$1"; }
+
+cmdline_files() {
+  case "$BOOTLOADER" in
+    grub)         echo /etc/default/grub ;;
+    systemd-boot) ls /boot/loader/entries/*.conf /efi/loader/entries/*.conf 2>/dev/null ;;
+    limine)       ls /boot/EFI/BOOT/limine.conf /boot/limine/limine.conf /boot/limine.conf 2>/dev/null ;;
+    refind)       ls /boot/refind_linux.conf 2>/dev/null ;;
+  esac
+}
+line_regex() {
+  case "$BOOTLOADER" in
+    grub)         echo '^GRUB_CMDLINE_LINUX_DEFAULT=' ;;
+    systemd-boot) echo '^options ' ;;
+    limine)       echo '^ *(cmdline|kernel_cmdline):' ;;
+    refind)       echo '^"' ;;
+  esac
+}
+
+grub_theme() { # on|off
+  [ "$BOOTLOADER" = grub ] && [ -f /etc/default/grub ] || return 0
+  sed -i '/^# >>> rustos-bootsplash/,/^# <<< rustos-bootsplash/d' /etc/default/grub
+  if [ "$1" = on ] && [ -r "$GRUBBG" ]; then
+    cat >> /etc/default/grub <<EOF
+# >>> rustos-bootsplash (RustOS menu look; "rustos-bootsplash off" removes it)
+GRUB_BACKGROUND="$GRUBBG"
+GRUB_COLOR_NORMAL="light-gray/black"
+GRUB_COLOR_HIGHLIGHT="white/black"
+GRUB_GFXMODE=auto
+# <<< rustos-bootsplash
+EOF
+  fi
+}
+
+apply_bootloader() {
+  if [ "$BOOTLOADER" = grub ]; then
+    grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || { echo "grub-mkconfig failed"; return 1; }
+  fi
+  return 0
+}
+
+rebuild() {
+  say "Rebuilding the startup files (initramfs)... this takes a minute"
+  if [ "$QUIET" = 1 ]; then mkinitcpio -P >/dev/null 2>&1; else mkinitcpio -P; fi
+}
+
+is_on() { hook_files >/dev/null && hooks_have "$(hook_files | head -n1)" 2>/dev/null; }
+
+case "$cmd" in
+  status)
+    if is_on; then echo "Boot screen: ON (theme: $(plymouth-set-default-theme 2>/dev/null || echo ?))"; else echo "Boot screen: OFF"; fi
+    echo "Boot loader: ${BOOTLOADER:-unknown}" ;;
+
+  on)
+    [ "$(uname -m)" = x86_64 ] || [ "${2:-}" = --force ] || die "the boot screen is only for PCs (on ARM/UTM it slows down the start)."
+    command -v plymouth-set-default-theme >/dev/null 2>&1 || { say "Installing Plymouth..."; pacman -S --needed --noconfirm plymouth >/dev/null || die "could not install plymouth"; }
+    [ -f /usr/share/plymouth/themes/$THEME/$THEME.plymouth ] || die "the RustOS theme is missing (run a RustOS update)."
+    [ -n "$BOOTLOADER" ] || die "could not tell which boot loader this PC uses."
+    plymouth-set-default-theme "$THEME" || die "could not pick the theme"
+    add_hook
+    rx=$(line_regex)
+    for f in $(cmdline_files); do cp -p "$f" "$f.rustos-bak" 2>/dev/null; add_word "$f" "$rx"; done
+    grub_theme on
+    if ! rebuild || ! apply_bootloader; then
+      echo "Something failed - putting everything back so the PC still starts."
+      del_hook
+      for f in $(cmdline_files); do del_word "$f" "$rx"; done
+      grub_theme off
+      rebuild; apply_bootloader
+      exit 1
+    fi
+    say "Done. You will see the RustOS boot screen the next time the PC starts." ;;
+
+  off)
+    del_hook
+    rx=$(line_regex)
+    for f in $(cmdline_files); do del_word "$f" "$rx"; done
+    grub_theme off
+    rebuild && apply_bootloader
+    say "Done. The PC starts with the plain text screen again." ;;
+
+  preview)
+    command -v plymouthd >/dev/null 2>&1 || die "Plymouth is not installed. Run: rustos-bootsplash on"
+    plymouth-set-default-theme "$THEME" >/dev/null 2>&1
+    echo "Showing the boot screen for 6 seconds..."
+    plymouthd && plymouth --show-splash
+    sleep 6
+    plymouth --quit ;;
+
+  auto)
+    # used by the update: once, PCs only, known boot loaders only, never on the live disk
+    [ -e "$MARK" ] && exit 0
+    [ -d /run/archiso ] && exit 0
+    [ "$(uname -m)" = x86_64 ] || exit 0
+    [ -r /etc/rustos/bootloader.conf ] || exit 0      # not installed with the RustOS installer (yet): ask again next time
+    mkdir -p "${MARK%/*}"; touch "$MARK"
+    is_on && exit 0
+    QUIET=1 "$0" on --quiet || true
+    exit 0 ;;
+
+  *) echo "Usage: rustos-bootsplash on | off | status | preview"; exit 2 ;;
+esac
