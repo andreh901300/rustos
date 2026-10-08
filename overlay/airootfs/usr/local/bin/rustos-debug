@@ -1,0 +1,441 @@
+#!/usr/bin/env bash
+# RustOS debug and mod tool. Type  .debug help  in a terminal.
+#   .debug              short overview
+#   .debug help         every command
+#   .debug mainmod      the main mod menu: turn RustOS tweaks on and off, make your own mods
+# Also works as  rustos-debug ...  (".debug" is a link to this file).
+
+VERSION_FILE=/usr/share/rustos/os-release
+MODDIR="$HOME/.config/rustos/mods"
+STATE="$HOME/.config/rustos/mods.state"
+BASHRC="$HOME/.bashrc"
+ME=".debug"
+
+# ------------------------------------------------------------------ looks
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  B=$'\e[1m'; D=$'\e[2m'; R=$'\e[0m'; OR=$'\e[38;5;208m'; GR=$'\e[38;5;42m'; RD=$'\e[38;5;203m'; CY=$'\e[38;5;37m'; YL=$'\e[38;5;221m'
+else
+  B=""; D=""; R=""; OR=""; GR=""; RD=""; CY=""; YL=""
+fi
+title() { printf '\n%s%s== %s ==%s\n' "$B" "$OR" "$*" "$R"; }
+ok()    { printf '  %s✓%s %s\n' "$GR" "$R" "$*"; }
+bad()   { printf '  %s✗%s %s\n' "$RD" "$R" "$*"; }
+info()  { printf '  %s•%s %s\n' "$CY" "$R" "$*"; }
+kv()    { printf '  %s%-16s%s %s\n' "$OR" "$1" "$R" "$2"; }
+have()  { command -v "$1" >/dev/null 2>&1; }
+need_root() { if [ "$(id -u)" != 0 ]; then sudo "$@"; else "$@"; fi; }
+kw() { if have kwriteconfig6; then kwriteconfig6 "$@"; elif have kwriteconfig5; then kwriteconfig5 "$@"; else return 127; fi; }
+kr() { if have kreadconfig6; then kreadconfig6 "$@"; elif have kreadconfig5; then kreadconfig5 "$@"; fi; }
+kde_notify() { dbus-send --session --type=signal /KGlobalSettings org.kde.KGlobalSettings.notifyChange "int32:$1" int32:0 >/dev/null 2>&1; return 0; }
+
+rustos_version() {
+  local v
+  v=$(pacman -Q rustos-base 2>/dev/null | awk '{print $2}')
+  [ -n "$v" ] && { echo "$v"; return; }
+  # shellcheck disable=SC1090
+  [ -r "$VERSION_FILE" ] && . "$VERSION_FILE" 2>/dev/null && echo "${VERSION_ID:-${VERSION:-unknown}}" && return
+  echo unknown
+}
+repo_base() {   # update channel address, from pacman.conf
+  awk '/^\[rustos\]/{f=1;next} /^\[/{f=0} f && /^Server/{sub(/^Server *= */,""); sub(/\/\$arch.*$/,""); print; exit}' /etc/pacman.conf 2>/dev/null
+}
+
+# ------------------------------------------------------------------ help
+usage() {
+  cat <<EOF
+${B}${OR}RustOS debug${R}  ${D}(.debug or rustos-debug)${R}
+
+${B}Look around${R}
+  $ME info              what this PC is running (version, kernel, desktop, graphics, disk)
+  $ME update            is the update channel online? is an update waiting?
+  $ME logs [what]       errors from this boot. what = boot | last | update | kernel
+  $ME services          services that failed, and the RustOS ones
+  $ME net               network, DNS and internet test
+  $ME gpu               graphics card and driver
+  $ME disk              disk space and the biggest folders in your home
+  $ME report            save everything above into one text file to share (no passwords in it)
+
+${B}Fix things${R}
+  $ME fix               list the quick fixes
+  $ME fix <name>        run one: plasma | audio | network | pacman-lock | keyring | ipad | flatpak
+
+${B}Mods (custom tweaks you can turn on and off)${R}
+  $ME mainmod           the main mod menu: pick a number to turn a mod on or off
+  $ME mods              list every mod and if it is on
+  $ME mod <name> on     turn a mod on      ($ME mod <name> off  turns it off)
+  $ME mod new <name>    make your own mod (a small script you fill in)
+  $ME mod edit <name>   open your mod in a text editor
+  $ME mod delete <name> remove your own mod
+
+${B}Other${R}
+  $ME version           RustOS version
+  $ME help              this list
+EOF
+}
+
+overview() {
+  printf '%s%sRustOS debug%s  %sversion %s%s\n' "$B" "$OR" "$R" "$D" "$(rustos_version)" "$R"
+  printf 'Try:  %s.debug info%s   %s.debug mainmod%s   %s.debug fix%s   %s.debug help%s\n' "$CY" "$R" "$CY" "$R" "$CY" "$R" "$CY" "$R"
+}
+
+# ------------------------------------------------------------------ look around
+cmd_info() {
+  title "This PC"
+  kv "RustOS" "$(rustos_version)"
+  kv "Kernel" "$(uname -r) ($(uname -m))"
+  kv "Desktop" "${XDG_CURRENT_DESKTOP:-none} ${XDG_SESSION_TYPE:+(${XDG_SESSION_TYPE})}"
+  have plasmashell && kv "Plasma" "$(plasmashell --version 2>/dev/null | awk '{print $2}')"
+  kv "Uptime" "$(uptime -p 2>/dev/null | sed 's/^up //')"
+  kv "Memory" "$(free -h 2>/dev/null | awk '/^Mem:/{print $3 " used of " $2}')"
+  kv "Swap (zram)" "$(swapon --show=NAME,SIZE --noheadings 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')"
+  kv "Disk /" "$(df -h / 2>/dev/null | awk 'NR==2{print $3 " used of " $2 " (" $5 ")"}')"
+  have lspci && kv "Graphics" "$(lspci 2>/dev/null | grep -Ei 'vga|3d|display' | head -n1 | sed 's/^[^:]*: //' | cut -c1-70)"
+  kv "Virtual machine" "$(systemd-detect-virt 2>/dev/null || echo none)"
+  kv "Boot loader" "$(boot_loader)"
+  local au; au=$(systemctl is-enabled rustos-update.timer 2>/dev/null); kv "Auto updates" "${au:-unknown}"
+  have rustos-ipad-mode && kv "iPad mode" "$(rustos-ipad-mode status 2>/dev/null)"
+  kv "Update channel" "$(repo_base || true)"
+}
+boot_loader() {
+  if [ -d /boot/grub ] || [ -d /efi/grub ]; then echo GRUB; return; fi
+  if [ -d /boot/loader/entries ] || [ -d /efi/loader/entries ]; then echo systemd-boot; return; fi
+  if ls /boot/limine* /boot/EFI/limine >/dev/null 2>&1; then echo Limine; return; fi
+  if [ -d /boot/EFI/refind ]; then echo rEFInd; return; fi
+  echo unknown
+}
+
+cmd_update() {
+  title "Update channel"
+  local base local_v j remote
+  base=$(repo_base)
+  [ -n "$base" ] || { bad "No [rustos] repository in /etc/pacman.conf. Updates will not come in."; return 1; }
+  kv "Address" "$base"
+  local_v=$(pacman -Q rustos-base 2>/dev/null | awk '{print $2}')
+  kv "Installed" "${local_v:-rustos-base is not installed}"
+  if ! have curl; then bad "curl is missing"; return 1; fi
+  j=$(curl -fsS --max-time 8 "$base/latest.json?t=$(date +%s)" 2>/dev/null)
+  if [ -n "$j" ]; then
+    remote=$(printf '%s' "$j" | sed -n 's/.*"pkgver":"\([^"]*\)".*/\1/p')
+    ok "Channel is online. Newest: rustos-base ${remote:-?}"
+  else
+    info "No status file on the channel (older publish) - checking the package list instead"
+  fi
+  local arch; arch=$(uname -m)
+  if curl -fsSI --max-time 8 "$base/$arch/rustos.db" >/dev/null 2>&1; then ok "Package list for $arch is there"; else bad "Package list for $arch not found (is GitHub Pages on? was the last publish green?)"; fi
+  if [ -n "$remote" ] && [ -n "$local_v" ]; then
+    if [ "${local_v%-*}" = "$remote" ]; then ok "You are up to date"
+    elif [ "$(vercmp "${local_v%-*}" "$remote" 2>/dev/null)" = -1 ]; then info "${YL}Update waiting.${R} Get it now with:  sudo rustos-autoupdate now"
+    else info "Yours is newer than the channel (fine while you are building RustOS)"; fi
+  fi
+  have rustos-autoupdate && { echo; rustos-autoupdate status 2>/dev/null | sed 's/^/  /'; }
+}
+
+cmd_logs() {
+  case "${1:-boot}" in
+    boot)   title "Errors since this start";  journalctl -b -p err --no-pager -n 60 2>/dev/null || bad "journalctl is not available" ;;
+    last)   title "Errors from the start before"; journalctl -b -1 -p err --no-pager -n 60 2>/dev/null || bad "No earlier start saved" ;;
+    kernel) title "Kernel warnings"; journalctl -k -b -p warning --no-pager -n 60 2>/dev/null ;;
+    update) title "Update history"; tail -n 60 /var/log/rustos-update.log 2>/dev/null || bad "No update log yet" ;;
+    *) echo "Use: $ME logs boot | last | kernel | update"; return 1 ;;
+  esac
+}
+
+cmd_services() {
+  title "Failed services"
+  local f; f=$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}')
+  if [ -n "$f" ]; then while read -r u; do bad "$u   (see: systemctl status $u)"; done <<<"$f"; else ok "Nothing failed"; fi
+  if [ -n "$(systemctl --user --failed --no-legend 2>/dev/null)" ]; then bad "Some of your own (user) services failed: systemctl --user --failed"; fi
+  title "RustOS services"
+  local u s
+  for u in rustos-update.timer NetworkManager.service sddm.service bluetooth.service power-profiles-daemon.service systemd-timesyncd.service; do
+    s=$(systemctl is-active "$u" 2>/dev/null); [ -n "$s" ] || s=unknown
+    if [ "$s" = active ]; then ok "$u"; else info "$u: $s"; fi
+  done
+}
+
+cmd_net() {
+  title "Network"
+  have nmcli && nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device 2>/dev/null | grep -v ':unmanaged' | while IFS=: read -r d t s c; do kv "$d ($t)" "$s ${c:+- $c}"; done
+  local gw; gw=$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')
+  kv "Router" "${gw:-none}"
+  if getent hosts archlinux.org >/dev/null 2>&1; then ok "DNS works"; else bad "DNS does not answer (names do not turn into addresses)"; fi
+  if have curl && curl -fsS --max-time 6 -o /dev/null https://archlinux.org 2>/dev/null; then ok "Internet works"; else bad "Cannot reach the internet"; fi
+}
+
+cmd_gpu() {
+  title "Graphics"
+  have lspci && lspci -k 2>/dev/null | grep -EiA3 'vga|3d controller|display' | sed 's/^/  /'
+  have glxinfo && kv "OpenGL" "$(glxinfo -B 2>/dev/null | awk -F': ' '/OpenGL renderer/{print $2}')"
+  if have vulkaninfo; then kv "Vulkan" "$(vulkaninfo --summary 2>/dev/null | awk -F'= ' '/deviceName/{print $2; exit}')"; else info "vulkaninfo not installed (it comes with the Gaming Setup)"; fi
+  [ -e /proc/driver/nvidia/version ] && kv "NVIDIA driver" "$(head -n1 /proc/driver/nvidia/version | awk '{print $8}')"
+}
+
+cmd_disk() {
+  title "Disk space"
+  df -h -x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | sed 's/^/  /'
+  title "Biggest folders in your home"
+  du -xh --max-depth=1 "$HOME" 2>/dev/null | sort -rh | head -n 8 | sed 's/^/  /'
+  local c; c=$(du -sh /var/cache/pacman/pkg 2>/dev/null | awk '{print $1}')
+  [ -n "$c" ] && info "Package cache: $c  (clean it with: sudo paccache -rk1)"
+}
+
+cmd_report() {
+  local f; f="$HOME/rustos-debug-$(date +%Y%m%d-%H%M).txt"
+  {
+    echo "RustOS debug report, $(date)"
+    NO_COLOR=1 "$0" info; NO_COLOR=1 "$0" update; NO_COLOR=1 "$0" services; NO_COLOR=1 "$0" net; NO_COLOR=1 "$0" gpu; NO_COLOR=1 "$0" disk
+    NO_COLOR=1 "$0" mods
+    echo; echo "== Errors since this start =="; journalctl -b -p err --no-pager -n 150 2>/dev/null
+    echo; echo "== Update log =="; tail -n 80 /var/log/rustos-update.log 2>/dev/null
+  } > "$f" 2>&1
+  ok "Saved: $f"
+  info "Send that file when you ask for help (Discord). It has no passwords in it."
+}
+
+# ------------------------------------------------------------------ fixes
+cmd_fix() {
+  case "${1:-}" in
+    "")
+      title "Quick fixes"
+      cat <<EOF
+  $ME fix plasma        the panel or desktop froze or vanished: restart it
+  $ME fix audio         no sound: restart the sound system (PipeWire)
+  $ME fix network       Wi-Fi or cable stuck: restart NetworkManager
+  $ME fix pacman-lock   "unable to lock database": remove a stale lock
+  $ME fix keyring       "signature is invalid / unknown trust": refresh the package keys
+  $ME fix ipad          stuck in iPad mode: put the normal desktop back
+  $ME fix flatpak       Flatpak apps broken: repair and update them
+EOF
+      ;;
+    plasma)
+      systemctl --user restart plasma-plasmashell.service 2>/dev/null || { kquitapp6 plasmashell 2>/dev/null; sleep 1; setsid -f plasmashell >/dev/null 2>&1; }
+      ok "Desktop restarted" ;;
+    audio)
+      if systemctl --user restart pipewire pipewire-pulse wireplumber 2>/dev/null; then ok "Sound system restarted"; else bad "Could not restart PipeWire"; fi ;;
+    network)
+      need_root systemctl restart NetworkManager && ok "NetworkManager restarted" ;;
+    pacman-lock)
+      if pgrep -x pacman >/dev/null; then bad "pacman is still running. Wait for it to finish."; return 1; fi
+      if [ -e /var/lib/pacman/db.lck ]; then need_root rm -f /var/lib/pacman/db.lck && ok "Stale lock removed"; else ok "There is no lock"; fi ;;
+    keyring)
+      need_root pacman -Sy --noconfirm archlinux-keyring 2>/dev/null || need_root pacman -Sy --noconfirm archlinuxarm-keyring
+      if [ -r /usr/share/rustos/repo.conf ] && [ -r /usr/share/rustos/rustos-pub.gpg ]; then
+        # shellcheck disable=SC1091
+        . /usr/share/rustos/repo.conf
+        need_root pacman-key --add /usr/share/rustos/rustos-pub.gpg && need_root pacman-key --lsign-key "$REPO_FPR"
+      fi
+      ok "Keys refreshed. Try the update again." ;;
+    ipad)
+      have rustos-ipad-mode && rustos-ipad-mode off --quiet && ok "Normal desktop is back" ;;
+    flatpak)
+      have flatpak || { bad "Flatpak is not installed"; return 1; }
+      flatpak repair --user 2>/dev/null; need_root flatpak repair; flatpak update -y && ok "Flatpak repaired" ;;
+    *) bad "Unknown fix: $1"; cmd_fix; return 1 ;;
+  esac
+}
+
+# ------------------------------------------------------------------ mods
+# Built-in mods. Each has: desc, on, off, state (prints on/off).
+BUILTIN="dark noanim accent prompt nobanner ipad autoupdate devtools"
+
+block_add() {   # block_add NAME "lines" [top]
+  block_del "$1"
+  touch "$BASHRC"
+  local blk; blk="# >>> rustos-mod:$1 >>>"$'\n'"$2"$'\n'"# <<< rustos-mod:$1 <<<"
+  if [ "${3:-}" = top ]; then
+    printf '%s\n%s\n' "$blk" "$(cat "$BASHRC")" > "$BASHRC.tmp" && mv "$BASHRC.tmp" "$BASHRC"
+  else
+    printf '%s\n' "$blk" >> "$BASHRC"
+  fi
+}
+block_del() { [ -f "$BASHRC" ] && sed -i "/^# >>> rustos-mod:$1 >>>\$/,/^# <<< rustos-mod:$1 <<<\$/d" "$BASHRC"; }
+block_has() { grep -q "^# >>> rustos-mod:$1 >>>\$" "$BASHRC" 2>/dev/null; }
+mark() { mkdir -p "${STATE%/*}"; touch "$STATE"; sed -i "/^$1=/d" "$STATE"; [ -n "${2:-}" ] && echo "$1=$2" >> "$STATE"; }
+marked() { grep -q "^$1=on\$" "$STATE" 2>/dev/null; }
+
+mod_desc() {
+  case "$1" in
+    dark)       echo "Dark theme (Breeze Dark) for the whole desktop" ;;
+    noanim)     echo "No animations: windows open instantly (faster on old PCs and iPad)" ;;
+    accent)     echo "Rust-orange accent color (or your own: .debug mod accent on 120,80,255)" ;;
+    prompt)     echo "Colorful RustOS terminal prompt" ;;
+    nobanner)   echo "No fastfetch banner when a terminal opens" ;;
+    ipad)       echo "iPad mode: dock, app grid, touch keyboard" ;;
+    autoupdate) echo "Automatic updates every day" ;;
+    devtools)   echo "Programming tools: gcc, make, git, base-devel (installs them)" ;;
+  esac
+}
+mod_state() {
+  case "$1" in
+    dark)       [ "$(kr --file kdeglobals --group General --key ColorScheme)" = BreezeDark ] && echo on || echo off ;;
+    noanim)     [ "$(kr --file kdeglobals --group KDE --key AnimationDurationFactor)" = 0 ] && echo on || echo off ;;
+    accent)     [ -n "$(kr --file kdeglobals --group General --key AccentColor)" ] && echo on || echo off ;;
+    prompt)     block_has prompt && echo on || echo off ;;
+    nobanner)   block_has nobanner && echo on || echo off ;;
+    ipad)       have rustos-ipad-mode && rustos-ipad-mode status 2>/dev/null | grep -q '^on' && echo on || echo off ;;
+    autoupdate) systemctl is-enabled --quiet rustos-update.timer 2>/dev/null && echo on || echo off ;;
+    devtools)   pacman -Qq base-devel >/dev/null 2>&1 && pacman -Qq git >/dev/null 2>&1 && echo on || echo off ;;
+  esac
+}
+mod_set() {   # mod_set NAME on|off [arg]
+  local n=$1 v=$2 a=${3:-}
+  case "$n:$v" in
+    dark:on)        plasma-apply-colorscheme BreezeDark >/dev/null 2>&1 || kw --file kdeglobals --group General --key ColorScheme BreezeDark ;;
+    dark:off)       plasma-apply-colorscheme BreezeLight >/dev/null 2>&1 || kw --file kdeglobals --group General --key ColorScheme BreezeLight ;;
+    noanim:on)      kw --file kdeglobals --group KDE --key AnimationDurationFactor 0; kde_notify 1 ;;
+    noanim:off)     kw --file kdeglobals --group KDE --key AnimationDurationFactor --delete; kde_notify 1 ;;
+    accent:on)
+      a=${a:-255,154,60}
+      printf '%s' "$a" | grep -Eq '^[0-9]{1,3},[0-9]{1,3},[0-9]{1,3}$' || { bad "Color must look like 255,154,60"; return 1; }
+      kw --file kdeglobals --group General --key AccentColor "$a"; kde_notify 0 ;;
+    accent:off)     kw --file kdeglobals --group General --key AccentColor --delete; kde_notify 0 ;;
+    prompt:on)      block_add prompt "PS1='\\[\\e[38;5;208m\\]\\u@\\h\\[\\e[0m\\] \\[\\e[38;5;37m\\]\\w\\[\\e[0m\\] \\[\\e[38;5;208m\\]>\\[\\e[0m\\] '" ;;
+    prompt:off)     block_del prompt ;;
+    nobanner:on)    block_add nobanner "export RUSTOS_BANNER_DONE=1" top ;;
+    nobanner:off)   block_del nobanner ;;
+    ipad:on)        rustos-ipad-mode on ;;
+    ipad:off)       rustos-ipad-mode off ;;
+    autoupdate:on)  rustos-autoupdate on ;;
+    autoupdate:off) rustos-autoupdate off ;;
+    devtools:on)    need_root pacman -S --needed --noconfirm base-devel git ;;
+    devtools:off)   info "The tools stay installed (other apps may need them). Remove them by hand: sudo pacman -Rns base-devel"; return 0 ;;
+    *) return 2 ;;
+  esac
+}
+
+# your own mods: ~/.config/rustos/mods/NAME.sh with desc=..., on(), off(), and optionally state()
+user_mods() { [ -d "$MODDIR" ] && find "$MODDIR" -maxdepth 1 -name '*.sh' -printf '%f\n' 2>/dev/null | sed 's/\.sh$//' | sort; }
+is_user_mod() { [ -f "$MODDIR/$1.sh" ]; }
+umod() {   # umod NAME desc|on|off|state
+  bash -c '
+    set +e
+    desc=""
+    . "$1" || exit 3
+    case "$2" in
+      desc)  echo "${desc:-your own mod}" ;;
+      state) if declare -F state >/dev/null; then state; else grep -q "^$3=on\$" "$4" 2>/dev/null && echo on || echo off; fi ;;
+      on|off) declare -F "$2" >/dev/null || { echo "This mod has no $2() part."; exit 4; }; "$2" ;;
+    esac' _ "$MODDIR/$1.sh" "$2" "$1" "$STATE"
+}
+
+all_mods() { for m in $BUILTIN; do echo "$m"; done; user_mods; }
+any_desc()  { if is_user_mod "$1"; then umod "$1" desc; else mod_desc "$1"; fi; }
+any_state() { if is_user_mod "$1"; then umod "$1" state; else mod_state "$1"; fi; }
+known() { case " $BUILTIN " in *" $1 "*) return 0 ;; esac; is_user_mod "$1"; }
+
+any_set() {   # any_set NAME on|off [arg]
+  local rc
+  if is_user_mod "$1"; then umod "$1" "$2"; rc=$?; [ $rc = 0 ] && mark "$1" "$2"
+  else mod_set "$@"; rc=$?; fi
+  if [ $rc = 0 ]; then
+    if [ "$2" = on ]; then ok "$1 is on"; else ok "$1 is off"; fi
+    case "$1" in prompt|nobanner) info "Open a new terminal (or run: source ~/.bashrc) to see it." ;; dark|accent) info "Some apps change after you reopen them." ;; esac
+  else bad "Could not turn $1 $2"; fi
+  return $rc
+}
+
+cmd_mods() {
+  title "Mods"
+  local m s
+  while read -r m; do
+    [ -n "$m" ] || continue
+    s=$(any_state "$m")
+    if [ "$s" = on ]; then printf '  %s[ON ]%s %s%-11s%s %s\n' "$GR" "$R" "$B" "$m" "$R" "$(any_desc "$m")"
+    else printf '  %s[off]%s %-11s %s\n' "$D" "$R" "$m" "$(any_desc "$m")"; fi
+  done < <(all_mods)
+  echo; info "Turn one on or off: $ME mod <name> on|off   or use the menu: $ME mainmod"
+}
+
+mod_new() {
+  local n=$1 f
+  printf '%s' "$n" | grep -Eq '^[a-z][a-z0-9_-]{0,30}$' || { bad "Use a short name: small letters, numbers, - or _"; return 1; }
+  case " $BUILTIN " in *" $n "*) bad "$n is a built-in mod. Pick another name."; return 1 ;; esac
+  mkdir -p "$MODDIR"; f="$MODDIR/$n.sh"
+  [ -e "$f" ] && { bad "$f already exists. Edit it with: $ME mod edit $n"; return 1; }
+  cat > "$f" <<EOF
+# RustOS mod: $n
+# Turn it on with:  .debug mod $n on      and off with:  .debug mod $n off
+# Put any commands you like into on() and off(). They run as you (use sudo for system changes).
+desc="My mod: $n"
+
+on() {
+  echo "Turning $n on"
+  # examples:
+  #   kwriteconfig6 --file kdeglobals --group General --key AccentColor 0,170,255
+  #   echo "alias hi='echo hello'" >> ~/.bashrc
+  #   notify-send "RustOS" "$n is on"
+}
+
+off() {
+  echo "Turning $n off"
+}
+
+# Optional: print "on" or "off" so .debug mods can show the real state.
+# state() { echo off; }
+EOF
+  ok "Made $f"
+  info "Edit it with: $ME mod edit $n   then turn it on with: $ME mod $n on"
+}
+
+cmd_mod() {
+  local n=${1:-} v=${2:-}
+  case "$n" in
+    ""|list) cmd_mods; return ;;
+    new)    [ -n "$v" ] || { echo "Use: $ME mod new <name>"; return 1; }; mod_new "$v"; return ;;
+    edit)   is_user_mod "$v" || { bad "No own mod called '$v'. Make one: $ME mod new $v"; return 1; }
+            "${EDITOR:-$(command -v kate || command -v nano || echo vi)}" "$MODDIR/$v.sh"; return ;;
+    delete) is_user_mod "$v" || { bad "No own mod called '$v'"; return 1; }; rm -f "$MODDIR/$v.sh"; mark "$v"; ok "Deleted $v"; return ;;
+  esac
+  known "$n" || { bad "There is no mod called '$n'"; cmd_mods; return 1; }
+  case "$v" in
+    on|off) any_set "$n" "$v" "${3:-}" ;;
+    toggle) if [ "$(any_state "$n")" = on ]; then any_set "$n" off; else any_set "$n" on; fi ;;
+    ""|status) echo "$n: $(any_state "$n")  -  $(any_desc "$n")" ;;
+    *) echo "Use: $ME mod $n on|off|toggle|status"; return 1 ;;
+  esac
+}
+
+cmd_mainmod() {
+  local mods=() i c n
+  while :; do
+    mapfile -t mods < <(all_mods)
+    printf '\n%s%s  RustOS main mod menu  %s\n' "$B" "$OR" "$R"
+    printf '  %sPick a number to turn a mod on or off.%s\n\n' "$D" "$R"
+    for i in "${!mods[@]}"; do
+      if [ "$(any_state "${mods[i]}")" = on ]; then c="${GR}[ON ]${R}"; else c="${D}[off]${R}"; fi
+      printf '  %s%2d%s  %s  %-11s %s\n' "$OR" "$((i + 1))" "$R" "$c" "${mods[i]}" "$(any_desc "${mods[i]}")"
+    done
+    printf '\n  %s n%s  make your own mod    %s i%s  info    %s f%s  quick fixes    %s q%s  quit\n' "$OR" "$R" "$OR" "$R" "$OR" "$R" "$OR" "$R"
+    read -r -p "  > " c || { echo; return 0; }
+    case "$c" in
+      q|Q|"") return 0 ;;
+      n|N) read -r -p "  Name for your mod: " n || return 0; mod_new "$n" ;;
+      i|I) cmd_info ;;
+      f|F) cmd_fix; read -r -p "  Fix name (or Enter to go back): " n || return 0; [ -n "$n" ] && cmd_fix "$n" ;;
+      *[!0-9]*) bad "Type a number from the list" ;;
+      *) if [ "$c" -ge 1 ] && [ "$c" -le "${#mods[@]}" ]; then cmd_mod "${mods[c - 1]}" toggle; else bad "Type a number from the list"; fi ;;
+    esac
+  done
+}
+
+# ------------------------------------------------------------------ main
+sub=${1:-}; shift 2>/dev/null || true
+case "$sub" in
+  "")                 overview ;;
+  help|-h|--help)     usage ;;
+  version|-v)         echo "RustOS $(rustos_version)" ;;
+  info)               cmd_info ;;
+  update|updates)     cmd_update ;;
+  logs|log)           cmd_logs "$@" ;;
+  services|svc)       cmd_services ;;
+  net|network)        cmd_net ;;
+  gpu)                cmd_gpu ;;
+  disk)               cmd_disk ;;
+  report)             cmd_report ;;
+  fix)                cmd_fix "$@" ;;
+  mods)               cmd_mods ;;
+  mod)                cmd_mod "$@" ;;
+  mainmod|menu)       cmd_mainmod ;;
+  _names)             all_mods ;;          # for tab completion
+  *) bad "Unknown command: $sub"; echo "  Type:  $ME help"; exit 1 ;;
+esac

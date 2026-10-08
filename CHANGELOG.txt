@@ -1,8 +1,17 @@
 RustOS change list. Newest on top. Installed systems show this in "What's new" after an update.
 Each "== RustOS x.y ==" line starts a version. publish.bat adds a line under the newest version for you.
 
+== RustOS 2.8 ==
+- New .debug command in the terminal: type  .debug help  to see everything
+- .debug info, update, logs, services, net, gpu, disk: see what your PC is doing and why something fails
+- .debug report saves everything into one text file you can send when you ask for help
+- .debug fix: quick fixes for a frozen panel, no sound, stuck network, pacman lock, package keys, iPad mode, Flatpak
+- .debug mainmod: the main mod menu. Turn tweaks on and off (dark theme, no animations, accent color, colorful prompt, no banner, iPad mode, auto updates, programming tools)
+- Make your own mods: .debug mod new <name> makes a small script, then .debug mod <name> on
+- Tab completion for .debug
+- ARM edition: much smaller startup file, so it boots on iPads with less memory (fixes "Failed to load initrd")
+
 == RustOS 2.7 ==
-- jus the check thing
 - New iPad mode: an iPad-style home screen with a floating dock, app grid, thin top bar, iPad-style icons, windows that open full screen and a touch keyboard. Works with mouse and keyboard too, so you can try it on any PC without a touchscreen
 - Button to open it: "iPad Mode" in the menu, on the desktop, in the taskbar and in the Update Center, or press Meta+Ctrl+T. Turn it off the same way and your old desktop comes back exactly as it was
 - Touchscreen support for PCs and iPad: on-screen keyboard (also on the login screen), swipe up from the bottom edge to see open windows, "Touch only" option that keeps your normal desktop, auto-rotate support

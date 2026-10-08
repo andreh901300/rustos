@@ -120,10 +120,25 @@ grep -q '^\[rustos\]' /etc/pacman.conf || printf '\n[rustos]\nSigLevel = Require
 sed -i 's/ autodetect//' /etc/mkinitcpio.conf
 sed -i 's/^MODULES=.*/MODULES=(virtio_pci virtio_blk virtio_scsi virtio_net virtio_gpu ext4 vfat nls_cp437 nls_iso8859_1)/' /etc/mkinitcpio.conf
 
+# Small initramfs: only what a UTM/QEMU virtual machine needs. A big one (everything, no autodetect) does not fit
+# in the firmware's memory on an iPad and stops the boot with "EFI stub: Failed to load initrd".
+mkdir -p /etc/mkinitcpio.conf.d
+cat > /etc/mkinitcpio.conf.d/rustos-vm.conf <<'MKI'
+MODULES=(virtio_pci virtio_blk virtio_scsi virtio_net virtio_gpu ext4 vfat nls_cp437 nls_iso8859_1)
+HOOKS=(base udev modconf keyboard keymap block filesystems fsck)
+COMPRESSION="zstd"
+COMPRESSION_OPTIONS=(-19 -T0)
+MKI
+
 echo "== Updating the base system"
 pacman -Syu --noconfirm --cachedir /var/cache/pacman/hostcache
 echo "== Kernel (reinstalled so it lands on the boot partition)"
 pacman -S --noconfirm --cachedir /var/cache/pacman/hostcache linux-aarch64 mkinitcpio
+# only the small image: the "fallback" one (every driver) is what runs out of memory
+sed -i "s/^PRESETS=.*/PRESETS=('default')/" /etc/mkinitcpio.d/linux-aarch64.preset
+rm -f /boot/initramfs-*-fallback.img
+mkinitcpio -P
+ls -la /boot
 echo "== Tools for a virtual machine"
 inst sudo networkmanager qemu-guest-agent spice-vdagent cloud-guest-utils parted e2fsprogs dosfstools
 echo "== The RustOS desktop (rustos-base)"

@@ -257,6 +257,17 @@ Steps for the iPad owner are in the website's install guide (section "iPad and A
 run yet**: expect to fix a few things from the Actions log the first time (package names, boot loader, file sizes).
 If the artifact is too big for GitHub, tell me and the image can be made smaller.
 
+## .debug (debug tools and mods)
+
+In a terminal type `.debug help`. It is `/usr/local/bin/rustos-debug` (`.debug` is a link to it), with tab completion.
+- Look around: `.debug info | update | logs [boot|last|kernel|update] | services | net | gpu | disk`
+- `.debug report` writes everything into `~/rustos-debug-DATE.txt` to share when asking for help.
+- `.debug fix plasma | audio | network | pacman-lock | keyring | ipad | flatpak`
+- Mods: `.debug mainmod` (menu), `.debug mods`, `.debug mod <name> on|off|toggle|status`. Built in: dark, noanim, accent,
+  prompt, nobanner, ipad, autoupdate, devtools. Your own: `.debug mod new <name>` makes
+  `~/.config/rustos/mods/<name>.sh` with `on()` and `off()` functions (and an optional `state()`).
+  Terminal mods add marked blocks to `~/.bashrc` (`# >>> rustos-mod:NAME >>>`) and remove them exactly on `off`.
+
 ## The website and the repository page
 
 The website (`rustos-site`, PHP) is a RustOS desktop: the fastfetch window can be dragged, there is a custom cursor, an

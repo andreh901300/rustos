@@ -1,0 +1,15 @@
+# Tab completion for .debug / rustos-debug
+_rustos_debug() {
+  local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD-1]} w=""
+  case $COMP_CWORD in
+    1) w="help info update logs services net gpu disk report fix mods mod mainmod version" ;;
+    2) case $prev in
+         logs) w="boot last kernel update" ;;
+         fix)  w="plasma audio network pacman-lock keyring ipad flatpak" ;;
+         mod)  w="new edit delete $(rustos-debug _names 2>/dev/null | tr '\n' ' ')" ;;
+       esac ;;
+    3) [ "${COMP_WORDS[1]}" = mod ] && case $prev in new) w="" ;; edit|delete) w="$(ls ~/.config/rustos/mods 2>/dev/null | sed 's/\.sh$//')" ;; *) w="on off toggle status" ;; esac ;;
+  esac
+  mapfile -t COMPREPLY < <(compgen -W "$w" -- "$cur")
+}
+complete -F _rustos_debug rustos-debug .debug

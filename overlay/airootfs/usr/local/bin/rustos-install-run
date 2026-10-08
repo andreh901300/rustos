@@ -187,7 +187,7 @@ else
   install -Dm644 /etc/systemd/system/rustos-update.timer   /mnt/etc/systemd/system/rustos-update.timer
   install -Dm644 /etc/pacman.d/hooks/rustos-bootloader.hook /mnt/etc/pacman.d/hooks/rustos-bootloader.hook
   for f in rustos-update-event rustos-update-notify rustos-update-center rustos-gaming \
-           rustos-restorepoint rustos-rollback rustos-run-exe rustos-apps rustos-switch rustos-education rustos-antivirus rustos-exe-center rustos-ipad-mode; do
+           rustos-restorepoint rustos-rollback rustos-run-exe rustos-apps rustos-switch rustos-education rustos-antivirus rustos-exe-center rustos-ipad-mode rustos-debug; do
     install -Dm755 "/usr/local/bin/$f" "/mnt/usr/local/bin/$f"
   done
   for f in etc/pacman.d/hooks/rustos-update-event.hook \
@@ -201,10 +201,13 @@ else
            usr/share/applications/rustos-switch.desktop usr/share/applications/rustos-education.desktop usr/share/applications/rustos-antivirus.desktop usr/share/applications/rustos-exe-center.desktop \
            usr/share/applications/rustos-ipad-mode.desktop usr/share/applications/rustos-ipad-keyboard.desktop \
            usr/share/rustos/apps.catalog usr/share/rustos/wallpapers/ipad.svg etc/sddm.conf.d/rustos-touch.conf \
+           usr/share/bash-completion/completions/rustos-debug \
            usr/share/kio/servicemenus/rustos-run-game.desktop usr/share/kio/servicemenus/rustos-scan-virus.desktop; do
     install -Dm644 "/$f" "/mnt/$f"
   done
   mkdir -p /mnt/etc/systemd/user/default.target.wants /mnt/var/lib/rustos
+  ln -sf rustos-debug /mnt/usr/local/bin/.debug
+  install -Dm644 /usr/share/bash-completion/completions/rustos-debug /mnt/usr/share/bash-completion/completions/.debug
   ln -sf ../rustos-update-notify.path    /mnt/etc/systemd/user/default.target.wants/rustos-update-notify.path
   ln -sf ../rustos-update-notify.service /mnt/etc/systemd/user/default.target.wants/rustos-update-notify.service
 fi
