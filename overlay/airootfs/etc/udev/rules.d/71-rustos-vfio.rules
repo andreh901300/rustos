@@ -1,0 +1,5 @@
+# RustOS: a PCIe device that root gave to VFIO (rustos-devhw vfio bind) can be used by the rustos-vfio group.
+# Only devices already given to VFIO get a /dev/vfio/N node, and VFIO only works with the IOMMU on, so members
+# can reach those devices and nothing else. Nobody is in the group until "rustos-devhw access --vfio <user>".
+SUBSYSTEM=="vfio", KERNEL=="[0-9]*", GROUP="rustos-vfio", MODE="0660"
+SUBSYSTEM=="vfio-dev", GROUP="rustos-vfio", MODE="0660"

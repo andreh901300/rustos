@@ -1,0 +1,14 @@
+[Unit]
+Description=RustOS: give the chosen PCIe devices to VFIO (rustos-devhw vfio keep)
+Documentation=file:/usr/share/rustos/hardware-dev.txt
+ConditionPathExists=/etc/rustos/vfio-devices.conf
+After=systemd-modules-load.service systemd-udev-trigger.service
+Before=display-manager.service libvirtd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/rustos-devhw vfio apply-boot
+
+[Install]
+WantedBy=multi-user.target

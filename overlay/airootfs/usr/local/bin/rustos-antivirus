@@ -77,6 +77,18 @@ if [ "${1:-}" = --act ]; then
   exit 0
 fi
 
+# ---- RustOS 3.0: this opens as a page in RustOS Center. The menus below are the backup
+#      (used when the window cannot start, or with  --classic  or  RUSTOS_CLASSIC=1).
+[ "${1:-}" = --classic ] && { export RUSTOS_CLASSIC=1; shift; }
+if [ -z "${1:-}" ] && [ -z "${RUSTOS_CLASSIC:-}" ] && /usr/local/bin/rustos-center --can-start; then
+  exec /usr/local/bin/rustos-center --page antivirus
+fi
+
+# right-click "Scan for viruses": scan in the window too
+if [ "${1:-}" = --scan ] && [ -z "${RUSTOS_CLASSIC:-}" ] && /usr/local/bin/rustos-center --can-start; then
+  shift; exec /usr/local/bin/rustos-center --scan "$@"
+fi
+
 # ============================================================== part 1 (you)
 if [ -d /run/archiso ]; then
   kdialog --title "$T" --icon rustos --msgbox "The antivirus works on the installed RustOS.<br>Install it first, then open this again."

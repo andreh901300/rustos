@@ -154,7 +154,10 @@ case "$cmd" in
     [ -r /etc/rustos/bootloader.conf ] || exit 0      # not installed with the RustOS installer (yet): ask again next time
     mkdir -p "${MARK%/*}"; touch "$MARK"
     is_on && exit 0
-    QUIET=1 "$0" on --quiet || true
+    {
+      echo "== $(date '+%F %T') automatic setup after an update"
+      if "$0" on; then echo "OK"; else echo "FAILED (exit $?) - turn it on by hand to see why: sudo rustos-bootsplash on"; fi
+    } >> /var/log/rustos-bootsplash.log 2>&1
     exit 0 ;;
 
   *) echo "Usage: rustos-bootsplash on | off | status | preview"; exit 2 ;;

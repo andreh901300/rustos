@@ -64,3 +64,9 @@ Tools|syncthing|Syncthing: sync folders between devices|syncthing|-|-|-
 Tools|gnome-disk|GNOME Disks: drive health and images|gnome-disk-utility|-|-|-
 Tools|bitwarden|Bitwarden: password manager|bitwarden|-|-|-
 Tools|sensors|Temperatures and graphics-card monitor: lm_sensors, nvtop|lm_sensors nvtop|-|-|-
+FPGA and hardware|yosys|Yosys: Verilog synthesis (open source)|yosys|-|-|-
+FPGA and hardware|iverilog|Icarus Verilog: Verilog simulator|iverilog|-|-|-
+FPGA and hardware|verilator|Verilator: fast Verilog / SystemVerilog simulator|verilator|-|-|-
+FPGA and hardware|gtkwave|GTKWave: look at simulation waveforms|gtkwave|-|-|-
+FPGA and hardware|openfpgaloader|openFPGALoader: program FPGA boards over USB / JTAG|openfpgaloader|-|-|-
+FPGA and hardware|fpgaaccess|Board access: USB serial ports for your account (JTAG cables work for whoever is at the PC)|-|-|-|ui

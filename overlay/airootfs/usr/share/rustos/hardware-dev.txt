@@ -1,0 +1,118 @@
+RUSTOS HARDWARE DEVELOPMENT GUIDE (RustOS 3.1)
+================================================
+
+What this is
+  RustOS can be a workstation for FPGA boards and DMA-capable PCIe devices: it checks what your PC and its
+  Linux kernel support, gives a PCIe device to VFIO (protected by the IOMMU) for user-space drivers and
+  development VMs, sets up USB serial / JTAG access, and offers an LTS developer kernel with headers and DKMS.
+
+What this is not
+  It is not a DMA device. Software cannot turn a PC into a DMA card or an FPGA. You still need the real board
+  or card, and a driver for it (in the kernel, from the vendor, or your own).
+  A passing check means the OS side is ready. A real DMA transfer is only tested with your device, its driver
+  and your test program.
+
+Quick start
+  .debug dma                          the full check (same as: rustos-devhw check)
+  RustOS Center -> Hardware dev       the same check, plus buttons for everything below
+  sudo rustos-devhw access $USER      USB serial ports of FPGA boards for your account (log out and in once)
+  RustOS Apps -> FPGA and hardware    the open-source FPGA tools
+
+The check uses three words
+  supported    present and working as far as RustOS can check
+  unavailable  missing or turned off. The line under it says how to fix it
+  untested     present, but it needs your hardware or driver to really test it (for example a vendor driver)
+
+
+OPEN-SOURCE FPGA TOOLS (checked against the Arch Linux repositories on 2026-10-10)
+  Tool             Arch package     What it does                                  Status in RustOS
+  Yosys            yosys            Verilog synthesis                              in RustOS Apps (extra repo)
+  Icarus Verilog   iverilog         Verilog simulator for testbenches              in RustOS Apps (extra repo)
+  Verilator        verilator        fast Verilog/SystemVerilog simulator (to C++)  in RustOS Apps (extra repo)
+  GTKWave          gtkwave          waveform viewer (.vcd, .fst)                   in RustOS Apps (extra repo)
+  openFPGALoader   openfpgaloader   programs boards over FTDI, CMSIS-DAP, etc.     in RustOS Apps (extra repo)
+  nextpnr          (none)           place and route for iCE40, ECP5, Gowin...      NOT in the Arch repositories
+
+  nextpnr: use the YosysHQ "OSS CAD Suite" (one download with yosys, nextpnr, icestorm, trellis,
+  openFPGALoader and more; unpack it in your home folder and run its "environment" script), or build it
+  from the AUR. RustOS does not install AUR packages for you.
+  Typical open flow: Yosys (synthesis) -> nextpnr (place and route) -> icepack/ecppack (bitstream) ->
+  openFPGALoader (program the board). Simulate first with Icarus Verilog or Verilator, look at it in GTKWave.
+
+
+HARDWARE AND VENDOR TOOLS THAT NEED MORE THAN RUSTOS SHIPS
+  Lattice iCE40 / ECP5 boards (iCEBreaker, ULX3S, OrangeCrab...)
+      Open flow works. Needs nextpnr (see above). USB: FTDI chips, covered by RustOS's rules.
+  Gowin boards (Tang Nano, Tang Primer...)
+      Open flow works for many parts (nextpnr-himbaechel). Gowin EDA from the vendor is proprietary.
+  AMD/Xilinx boards (Arty, Basys, Zybo, Nexys, Alveo...)
+      Bitstreams need Vivado (proprietary, free "Standard" edition for many parts). Vivado officially supports
+      Ubuntu / RHEL; on Arch it usually works but older versions need libtinfo.so.5 (AUR: ncurses5-compat-libs).
+      Its cable drivers installer expects Ubuntu paths: RustOS's 70-rustos-fpga.rules already covers Digilent
+      FTDI cables and Xilinx platform cables. Platform Cable USB II also needs its firmware from Vivado.
+      openFPGALoader can program many Xilinx boards without Vivado.
+  Intel/Altera boards (DE10, Cyclone, Agilex...)
+      Needs Quartus (proprietary). USB-Blaster is covered by RustOS's rules. Older Quartus versions need
+      extra 32-bit libraries.
+  PCIe FPGA cards with DMA (Xilinx XDMA/QDMA designs, Intel/Altera PCIe, Alveo)
+      The kernel's "xdma" module (CONFIG_XILINX_XDMA) is a dmaengine driver used by some boards; it is not
+      the same as Xilinx's own XDMA/QDMA character-device driver (github.com/Xilinx/dma_ip_drivers), which is
+      built out of tree with DKMS. Vendor drivers often lag behind new kernels: use the LTS developer kernel.
+      Alveo cards also need Xilinx XRT. These are "untested" in the RustOS check until your driver is loaded.
+  Your own PCIe device or FPGA design
+      Two safe ways: write a kernel driver that uses the Linux DMA API (dma_alloc_coherent, dma_map_*) and
+      build it with DKMS, or give the device to VFIO and write a user-space driver / test it in a VM.
+
+
+VFIO: GIVING A PCIE DEVICE TO A PROGRAM OR A DEVELOPMENT VM
+  1. Turn on the IOMMU: VT-d (Intel) or IOMMU / AMD-Vi (AMD) in the firmware settings.
+     Intel PCs also need the kernel option intel_iommu=on:  sudo rustos-devhw iommu-on   then restart.
+  2. rustos-devhw devices      shows each device, its IOMMU group and whether VFIO can take it.
+  3. sudo rustos-devhw vfio bind 0000:03:00.0      (until the next restart)
+     sudo rustos-devhw vfio keep 0000:03:00.0      (at every start; undo with "forget")
+     sudo rustos-devhw vfio release 0000:03:00.0   (back to its normal driver)
+  4. Optional: sudo rustos-devhw access --vfio $USER   lets you open /dev/vfio/N without sudo and raises the
+     locked-memory limit (VFIO pins every DMA buffer; a VM pins all of its RAM).
+
+  RustOS refuses to give a device to VFIO when:
+    - the IOMMU is not active (then the device could reach all memory)
+    - VFIO no-IOMMU (unsafe) mode is on
+    - it is a PCI bridge, the graphics card showing your screen, or holds a disk that is in use
+    - another device in the same IOMMU group still has a normal driver (all of a group goes together;
+      RustOS does not use the "ACS override" kernel patch that fakes separate groups)
+
+  Safety rules RustOS always keeps
+    - it never adds iommu=off, intel_iommu=off, amd_iommu=off or iommu=pt
+    - it never turns on vfio "enable_unsafe_noiommu_mode"
+    - it never uses /dev/mem; UIO is not used for DMA devices (UIO has no DMA protection)
+
+
+KERNELS, HEADERS AND DKMS
+  RustOS uses the standard Arch kernel (linux). Optional extra kernels (the normal one always stays as a backup):
+    zen  low-latency kernel for games         (RustOS Center, Gaming)
+    lts  developer kernel: linux-lts + headers + DKMS   (RustOS Center, Hardware dev)
+         sudo rustos-performance kernel lts | default | status
+  DKMS builds out-of-tree modules for every installed kernel that has its headers. RustOS installs headers for
+  the normal kernel and the LTS kernel when you pick the developer kernel, and builds the modules right away so
+  a problem shows up before the restart:
+    rustos-devhw dkms                 what is built for which kernel
+    sudo rustos-devhw dkms build      build for the running kernel (or give a kernel version)
+  Build logs: /var/lib/dkms/<module>/<version>/build/make.log
+
+  "Kernel modules: unavailable - the modules of the running kernel are gone" means the kernel was updated and
+  the PC was not restarted. Restart, then load drivers again.
+
+
+PERMISSIONS (only what is needed)
+  USB serial consoles (/dev/ttyUSB*, /dev/ttyACM*)   group uucp (Arch's serial-port group)
+  JTAG cables and debug probes                       the person logged in at the PC (udev "uaccess"), no group
+  /dev/vfio/N of devices root gave to VFIO           group rustos-vfio (empty until you ask)
+  Nothing here gives root rights, and nothing changes for users who do not ask for it.
+
+Files
+  /usr/local/bin/rustos-devhw                  the tool
+  /etc/udev/rules.d/70-rustos-fpga.rules       JTAG / debug adapters
+  /etc/udev/rules.d/71-rustos-vfio.rules       /dev/vfio access for rustos-vfio
+  /usr/lib/sysusers.d/rustos-dev.conf          makes the rustos-vfio group
+  /etc/rustos/vfio-devices.conf                devices given to VFIO at every start (rustos-vfio.service)
+  /etc/security/limits.d/90-rustos-vfio.conf   locked-memory limit for rustos-vfio (written by "access --vfio")

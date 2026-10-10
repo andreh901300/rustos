@@ -86,6 +86,13 @@ if [ "${1:-}" = --install ]; then
   exit 0
 fi
 
+# ---- RustOS 3.0: this opens as a page in RustOS Center. The menus below are the backup
+#      (used when the window cannot start, or with  --classic  or  RUSTOS_CLASSIC=1).
+[ "${1:-}" = --classic ] && { export RUSTOS_CLASSIC=1; shift; }
+if [ -z "${1:-}" ] && [ -z "${RUSTOS_CLASSIC:-}" ] && /usr/local/bin/rustos-center --can-start; then
+  exec /usr/local/bin/rustos-center --page gaming
+fi
+
 # ============================================================== part 1: the questions (you)
 T="RustOS Gaming Setup"
 if [ -d /run/archiso ]; then
@@ -138,7 +145,7 @@ if [ "$(cat /run/rustos-gaming.status 2>/dev/null)" = ok ]; then
   extra=""
   case " ${picked[*]} " in *" nvidia "*) extra="<br><br><b>Restart your computer</b> once so the NVIDIA driver is used." ;; esac
   kdialog --title "$T" --icon rustos --msgbox \
-    "<b>Gaming setup finished!</b>$extra<br><br>In Steam: right-click a game, Properties, Launch Options, and type:<br><tt>gamemoderun mangohud %command%</tt><br>That turns on GameMode and the performance overlay.<br><br>For games that need it, use Properties, Compatibility, and tick a Proton version.<br><br>Windows games outside Steam: right-click the .exe and choose <b>Run as game</b>."
+    "<b>Gaming setup finished!</b>$extra<br><br>In Steam: right-click a game, Properties, Launch Options, and type:<br><tt>rustos-game %command%</tt><br>That turns on the RustOS game boost when plugged in and the battery FPS cap on battery (settings: RustOS Center, Gaming).<br><br>For games that need it, use Properties, Compatibility, and tick a Proton version.<br><br>Windows games outside Steam: right-click the .exe and choose <b>Run as game</b>."
 else
   kdialog --title "$T" --icon rustos --sorry \
     "The setup did not finish. Scroll the terminal window for the first error, or run it again from the menu."

@@ -4,6 +4,14 @@
 T="Switching from Windows"
 EQ=/usr/share/rustos/windows-equivalents.txt
 
+# ---- RustOS 3.0: this opens as a page in RustOS Center. The menus below are the backup
+#      (used when the window cannot start, or with  --classic  or  RUSTOS_CLASSIC=1).
+[ "${1:-}" = --classic ] && { export RUSTOS_CLASSIC=1; shift; }
+if [ -z "${1:-}" ] && [ -z "${RUSTOS_CLASSIC:-}" ] && /usr/local/bin/rustos-center --can-start; then
+  exec /usr/local/bin/rustos-center --page windows
+fi
+
+
 windows_files() {
   local args=() first=on name fs label size line mnt out
   while read -r name fs label size; do

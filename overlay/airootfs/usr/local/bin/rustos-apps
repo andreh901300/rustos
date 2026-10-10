@@ -31,7 +31,7 @@ if [ "${1:-}" = --install ]; then
     *)     lo=${lang%%_*} ;;
   esac
 
-  pkgs=(); fps=(); svcs=(); wine=0
+  pkgs=(); fps=(); svcs=(); wine=0; access=0
   for id in "$@"; do
     [ -n "$(catalog_field "$id" 2)" ] || { echo "  (unknown app: $id)"; continue; }
     p=$(catalog_field "$id" 4); f=$(catalog_field "$id" 5); s=$(catalog_field "$id" 6)
@@ -39,6 +39,7 @@ if [ "${1:-}" = --install ]; then
     { [ "$p" != - ] && pkgs+=($p); [ "$f" != - ] && fps+=($f); [ "$s" != - ] && svcs+=($s); }
     [ "$id" = office ] && [ -n "$lo" ] && pkgs+=("libreoffice-fresh-$lo")
     [ "$id" = windows ] && wine=1
+    [ "$id" = fpgaaccess ] && access=1
     [ "$id" = docker ] && echo "  (Docker: add yourself to the docker group later with:  sudo usermod -aG docker \$USER )"
   done
 
@@ -68,10 +69,25 @@ if [ "${1:-}" = --install ]; then
     done
   fi
 
+  if [ "$access" = 1 ]; then
+    echo "== Board access (serial ports for your account)"
+    u=${SUDO_USER:-}
+    [ -z "$u" ] && [ -n "${PKEXEC_UID:-}" ] && u=$(id -nu "$PKEXEC_UID" 2>/dev/null)
+    if [ -n "$u" ] && [ -x /usr/local/bin/rustos-devhw ]; then /usr/local/bin/rustos-devhw access "$u" || fail "board access could not be set up."
+    else echo "  (run this later: sudo rustos-devhw access YOUR-NAME)"; fi
+  fi
+
   echo ok > /run/rustos-apps.status
   echo
   echo "All done."
   exit 0
+fi
+
+# ---- RustOS 3.0: this opens as a page in RustOS Center. The menus below are the backup
+#      (used when the window cannot start, or with  --classic  or  RUSTOS_CLASSIC=1).
+[ "${1:-}" = --classic ] && { export RUSTOS_CLASSIC=1; shift; }
+if [ -z "${1:-}" ] && [ -z "${RUSTOS_CLASSIC:-}" ] && /usr/local/bin/rustos-center --can-start; then
+  exec /usr/local/bin/rustos-center --page apps
 fi
 
 # ============================================================== part 1 (you)

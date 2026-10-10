@@ -211,6 +211,16 @@ On older cards (GTX 10 series or older) choose No and the built-in open driver i
   fi
 fi
 
+# Optional hardware development (FPGA boards, DMA-capable PCIe devices). Nothing is ticked: most people skip this.
+DEVHW=""
+if [ "$(uname -m)" = x86_64 ]; then
+  DEVHW=$(kd --separate-output --checklist \
+"<b>Optional: hardware development</b><br>Only for people who build FPGA boards or PCIe devices. Skip it (press OK) if that is not you.<br>You can add all of this later in RustOS Center, Hardware dev." \
+    fpga   "FPGA tools: Yosys, Icarus Verilog, Verilator, GTKWave, openFPGALoader" off \
+    access "Board access: USB serial ports of FPGA boards for my account" off \
+    lts    "Developer kernel: Linux LTS with headers and DKMS (the normal kernel stays as a backup)" off | tr '\n' ' ') || DEVHW=""
+fi
+
 # Time zone from your IP address (falls back to UTC)
 TZ_=$(curl -fs --max-time 5 https://ipapi.co/timezone 2>/dev/null || true)
 [ -f "/usr/share/zoneinfo/$TZ_" ] || TZ_=UTC
@@ -228,7 +238,7 @@ Account: $FULLNAME (login name: $RUSTOS_USER)<br>
 Boot loader: $BOOTLOADER<br>
 Language: $LOCALE - Keyboard: $kdesc<br>
 Time zone: $TZ_<br>
-$([ "$NVIDIA" = 1 ] && echo "NVIDIA driver: will be installed<br>")<br>
+$([ "$NVIDIA" = 1 ] && echo "NVIDIA driver: will be installed<br>")$([ -n "${DEVHW// /}" ] && echo "Hardware development: $DEVHW<br>")<br>
 $WARN" || exit 0
 
 # --- 6. Hand over to the root part -----------------------------------------
@@ -252,6 +262,7 @@ sudo install -m 600 /dev/null "$CONF"
   printf 'KBD_CON=%q\n' "$KBD_CON"
   printf 'NVIDIA=%q\n' "$NVIDIA"
   printf 'HYBRID=%q\n' "$HYBRID"
+  printf 'DEVHW=%q\n' "$DEVHW"
 } | sudo tee "$CONF" >/dev/null
 
 konsole --nofork -e sudo /usr/local/bin/rustos-install-run "$CONF"

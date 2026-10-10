@@ -2,10 +2,12 @@
 _rustos_debug() {
   local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD-1]} w=""
   case $COMP_CWORD in
-    1) w="selftest channel help info update logs services net gpu disk report fix mods mod mainmod version boot temp battery top usb ports wine packages history restore clean speed bench watch crash env display sound bluetooth" ;;
+    1) w="selftest channel help info update logs services net gpu disk report fix mods mod mainmod version boot temp battery top usb ports wine packages history restore clean speed bench watch crash env display sound bluetooth power center dma" ;;
     2) case $prev in
          logs) w="boot last kernel update" ;;
          channel) w="beta stable" ;;
+         dma) w="check devices usb dkms vfio access iommu-on help" ;;
+         center) w="home updates apps gaming power antivirus education look mods windows devhw system" ;;
          fix)  w="plasma audio network dns time pacman-lock keyring ipad flatpak fonts icons initramfs grub bootsplash mirrors exe" ;;
          mod)  w="new edit delete $(rustos-debug _names 2>/dev/null | tr '\n' ' ')" ;;
        esac ;;
@@ -14,3 +16,14 @@ _rustos_debug() {
   mapfile -t COMPREPLY < <(compgen -W "$w" -- "$cur")
 }
 complete -F _rustos_debug rustos-debug .debug
+
+_rustos_devhw() {
+  local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD-1]} w=""
+  case $COMP_CWORD in
+    1) w="check devices usb vfio access iommu-on dkms help" ;;
+    2) case $prev in vfio) w="list bind release keep forget" ;; dkms) w="status build" ;; access) w="--vfio --remove" ;; esac ;;
+    3) case $prev in bind|release|keep|forget) w="$(lspci -D 2>/dev/null | awk '{print $1}')" ;; build) w="$(ls /usr/lib/modules 2>/dev/null)" ;; esac ;;
+  esac
+  mapfile -t COMPREPLY < <(compgen -W "$w" -- "$cur")
+}
+complete -F _rustos_devhw rustos-devhw

@@ -22,7 +22,8 @@ put() { # put <mode> <source> <destination-in-package>
 }
 for f in neofetch rustos-branding rustos-first-login rustos-update rustos-autoupdate rustos-bootloader-update \
          rustos-update-event rustos-update-notify rustos-update-center rustos-gaming \
-         rustos-restorepoint rustos-rollback rustos-run-exe rustos-apps rustos-switch rustos-education rustos-antivirus rustos-exe-center rustos-ipad-mode rustos-debug rustos-bootsplash rustos-channel; do
+         rustos-restorepoint rustos-rollback rustos-run-exe rustos-apps rustos-switch rustos-education rustos-antivirus rustos-exe-center rustos-ipad-mode rustos-debug rustos-bootsplash rustos-channel \
+         rustos-performance rustos-game rustos-center rustos-devhw; do
   put 755 "$OV/usr/local/bin/$f" "usr/local/bin/$f"
 done
 put 644 "$OV/etc/systemd/system/rustos-update.service" etc/systemd/system/rustos-update.service
@@ -57,6 +58,17 @@ for f in exe_core.py exe_center.py; do put 644 "$OV/usr/share/rustos/exe-center/
 for f in "$OV"/usr/share/plymouth/themes/rustos/*; do put 644 "$f" "usr/share/plymouth/themes/rustos/${f##*/}"; done
 put 644 "$OV/usr/share/rustos/grub-background.png"            usr/share/rustos/grub-background.png
 put 644 "$OV/etc/pacman.d/hooks/rustos-bootsplash.hook"        etc/pacman.d/hooks/rustos-bootsplash.hook
+for f in center_core.py rustos_center.py; do put 644 "$OV/usr/share/rustos/center/$f" "usr/share/rustos/center/$f"; done
+put 644 "$OV/usr/share/applications/rustos-center.desktop"          usr/share/applications/rustos-center.desktop
+put 644 "$OV/etc/gamemode.ini"                                      etc/gamemode.ini
+put 644 "$OV/etc/udev/rules.d/61-rustos-power.rules"                etc/udev/rules.d/61-rustos-power.rules
+put 644 "$OV/etc/systemd/system/rustos-performance.service"         etc/systemd/system/rustos-performance.service
+put 644 "$OV/etc/udev/rules.d/70-rustos-fpga.rules"                 etc/udev/rules.d/70-rustos-fpga.rules
+put 644 "$OV/etc/udev/rules.d/71-rustos-vfio.rules"                 etc/udev/rules.d/71-rustos-vfio.rules
+put 644 "$OV/usr/lib/sysusers.d/rustos-dev.conf"                    usr/lib/sysusers.d/rustos-dev.conf
+put 644 "$OV/etc/systemd/system/rustos-vfio.service"                etc/systemd/system/rustos-vfio.service
+put 644 "$OV/usr/share/rustos/hardware-dev.txt"                     usr/share/rustos/hardware-dev.txt
+put 644 "$OV/usr/share/bash-completion/completions/rustos-debug"   usr/share/bash-completion/completions/rustos-devhw
 put 644 "$OV/usr/share/rustos/apps.catalog"                         usr/share/rustos/apps.catalog
 put 644 "$OV/usr/share/rustos/wallpapers/ipad.svg"                  usr/share/rustos/wallpapers/ipad.svg
 put 755 "$OV/usr/share/kio/servicemenus/rustos-scan-virus.desktop" usr/share/kio/servicemenus/rustos-scan-virus.desktop
@@ -81,7 +93,7 @@ put 644 branding/logo.svg     usr/share/icons/hicolor/scalable/apps/rustos.svg
 # Windows line endings would break the scripts
 find "$P" -type f \( -path '*/usr/local/bin/*' -o -name '*.hook' -o -name '*.service' -o -name '*.timer' \
   -o -name '*.desktop' -o -name '*.jsonc' -o -name 'os-release' -o -name '*.path' -o -name '*.rules' \
-  -o -name '*.conf' -o -name 'baloofilerc' -o -name 'CHANGELOG.txt' -o -name 'mimeapps.list' -o -name 'windows-equivalents.txt' -o -name 'apps.catalog' -o -path '*/bash-completion/*' -o -name '*.py' -o -name '*.script' -o -name '*.plymouth' \) -exec sed -i 's/\r$//' {} +
+  -o -name '*.conf' -o -name 'baloofilerc' -o -name 'CHANGELOG.txt' -o -name 'mimeapps.list' -o -name 'windows-equivalents.txt' -o -name 'apps.catalog' -o -path '*/bash-completion/*' -o -name '*.py' -o -name '*.script' -o -name '*.plymouth' -o -name '*.ini' -o -name 'hardware-dev.txt' \) -exec sed -i 's/\r$//' {} +
 
 # ---------------------------------------------------------------- PKGBUILD
 BASEV="$(tr -d ' \r\n' < VERSION)"
@@ -153,16 +165,19 @@ EOF
 sed -i "s|@PKGVER@|$PKGVER|; s|@URL@|$URL|; s|@DEPENDS@|$DEPENDS|" "$WORK/PKGBUILD"
 
 cat > "$WORK/rustos-base.install" <<'EOF'
-post_install() {
+rustos_setup() {
   systemctl daemon-reload 2>/dev/null || true
   systemctl enable power-profiles-daemon.service 2>/dev/null || true
+  # RustOS 3.0: power and game settings at every start, and when the charger is plugged in or out
+  systemctl enable rustos-performance.service 2>/dev/null || true
+  # RustOS 3.1: the rustos-vfio group (hardware development; nobody is in it until they ask)
+  systemd-sysusers rustos-dev.conf 2>/dev/null || true
+  udevadm control --reload 2>/dev/null || true
+  [ -d /run/systemd/system ] && /usr/local/bin/rustos-performance apply 2>/dev/null || true
   /usr/local/bin/rustos-branding || true
 }
-post_upgrade() {
-  systemctl daemon-reload 2>/dev/null || true
-  systemctl enable power-profiles-daemon.service 2>/dev/null || true
-  /usr/local/bin/rustos-branding || true
-}
+post_install() { rustos_setup; }
+post_upgrade() { rustos_setup; }
 EOF
 chown -R builder "$WORK"
 echo "Package rustos-base $PKGVER staged in $WORK"

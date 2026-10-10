@@ -1,6 +1,39 @@
 RustOS change list. Newest on top. Installed systems show this in "What's new" after an update.
 Each "== RustOS x.y ==" line starts a version. publish.bat adds a line under the newest version for you.
 
+== RustOS 3.1 ==
+- nothing dma
+- New hardware development tools for FPGA boards and DMA-capable PCIe devices (optional: nothing changes unless you use them)
+- New .debug dma: lists every PCIe device with its driver (lspci -nnk), the running kernel, headers, IOMMU status, VFIO modules, kernel settings, USB FPGA cables and serial ports, DKMS and FPGA tools, each marked supported, unavailable (with a fix) or untested
+- Protected VFIO: give one PCIe device to a user-space driver or a development VM with  sudo rustos-devhw vfio bind <slot>  (keep / forget for every start, release to give it back). Only with the IOMMU on; bridges, the screen's graphics card, disks in use and devices that share an IOMMU group with a busy device are refused. RustOS never turns the IOMMU off, never uses VFIO no-IOMMU mode and never touches /dev/mem
+- Intel PCs: rustos-devhw iommu-on adds intel_iommu=on to the boot options
+- FPGA boards: JTAG cables and debug probes (FTDI, Xilinx, Intel USB-Blaster, Digilent, J-Link, CMSIS-DAP) work for whoever is logged in at the PC; rustos-devhw access adds you to the serial-port group for board consoles
+- RustOS Apps: new FPGA and hardware group with Yosys, Icarus Verilog, Verilator, GTKWave and openFPGALoader
+- Developer kernel: Linux LTS with its headers and DKMS, one click in RustOS Center (Hardware dev) or  sudo rustos-performance kernel lts . DKMS modules are built for it right away and errors are shown, not hidden
+- RustOS Center: new Hardware dev page; the installer can set all of this up too (off unless ticked)
+- New guide: /usr/share/rustos/hardware-dev.txt (what needs vendor tools or drivers, and what does not)
+
+== RustOS 3.0 ==
+- New RustOS Center: RustOS's own settings app, in the same style as the EXE Center. Home, Updates, Apps, Gaming, Battery and power, Antivirus, Education, Look and iPad, Mods, Windows apps and System in one window
+- All RustOS apps open there now: Update Center, Apps, Gaming Setup, Antivirus, Education Center and Switching from Windows. The old pop-up menus stay as a backup (they open by themselves if the window cannot start)
+- New power manager: Automatic, Performance, Balanced or Battery saver mode. Automatic gives full speed when plugged in and saves the battery when not, and switches the moment you plug in or out
+- Laptop gaming on battery: games get an FPS cap on battery (60 FPS by default, often about double the play time and a cooler laptop), CPU turbo can be turned off on battery, and the power profile drops to power saver
+- Game boost when plugged in: full CPU speed and priority for the game (GameMode), fewer stutters, and speed settings for Proton, DXVK, Mesa and NVIDIA
+- Low-latency tweaks for games: split-lock slowdown off, no hardware watchdog, more memory maps for big games, no background memory shuffling
+- New rustos-game: put  rustos-game %command%  in Steam's Launch Options (RustOS Center copies it for you). "Run as game" on an .exe uses it too
+- FPS overlay switch (MangoHud: FPS, frame time, temperatures, battery) and an FPS cap for when you are plugged in
+- Optional zen kernel for lower input lag, one click in RustOS Center, Gaming (the normal kernel stays in the boot menu as a backup)
+- Battery page: battery %, time left, power use in watts, battery health, CPU temperature, and a charge limit (stop at 80%) on laptops that support it
+- Antivirus scans in the window with live progress, and you pick which infected files to lock away or delete
+- Mods page: switch every .debug mod on or off with one click, and make your own
+- System page: self-test, 16 one-click fixes and a help report
+- New .debug commands: .debug power and .debug center; the self-test checks RustOS Center and the power settings too
+
+== RustOS 2.11 ==
+- Typing rustos-update in a terminal updates right away, also on battery (only the automatic daily run waits for the charger)
+- .debug selftest: shows the real boot loader, explains why the boot screen is off, and finds the touch keyboard correctly
+- The automatic boot screen setup now writes what happened to /var/log/rustos-bootsplash.log
+
 == RustOS 2.10 ==
 - New: .debug selftest checks every RustOS feature (updates, desktop, EXE Center, boot screen, iPad mode, antivirus) and saves a PASS / WARN / FAIL list you can share
 - New beta update channel: test versions reach testers first. Join with  sudo rustos-channel beta  (or .debug mod beta on, or Update Center), leave with  sudo rustos-channel stable

@@ -1,0 +1,2 @@
+# RustOS: switch power settings when the charger is plugged in or out (rustos-performance, auto mode)
+SUBSYSTEM=="power_supply", ACTION=="change", RUN+="/usr/local/bin/rustos-performance auto"

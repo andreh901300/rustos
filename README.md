@@ -290,6 +290,44 @@ In a terminal type `.debug help`. It is `/usr/local/bin/rustos-debug` (`.debug` 
   `.../beta/$arch`) and leave with `sudo rustos-channel stable` (`pacman -Syuu`, so they go back to the normal versions).
   Happy with a beta? Run `bash publish.sh` without `--beta`: it publishes the same commits to everyone, even with no new changes.
 
+## RustOS Center, power and gaming (3.0)
+
+- **RustOS Center** (`rustos-center`, menu "RustOS Center"): PyQt6 app in `usr/share/rustos/center/` (`rustos_center.py` window,
+  `center_core.py` logic without Qt; `python3 center_core.py` runs its checks). Pages: home updates apps gaming power antivirus
+  education look mods windows system (`rustos-center --page gaming`). It only runs the existing RustOS tools: root steps go
+  through `pkexec` (one password prompt), and their output shows in the log at the bottom. One window per user (a second start
+  just switches the page). Errors go to `~/.cache/rustos-center/window.log`.
+- `rustos-update-center`, `rustos-apps`, `rustos-gaming`, `rustos-antivirus`, `rustos-education` and `rustos-switch` open their
+  page in RustOS Center when it can start (`rustos-center --can-start`). With `--classic`, `RUSTOS_CLASSIC=1`, on the live disk
+  or without PyQt6 they show the old kdialog menus.
+- **Power manager** `rustos-performance` (settings `/etc/rustos/performance.conf`, written on the first change):
+  `status`, `mode auto|performance|balanced|battery`, `set KEY VALUE`, `setmany K=V...`, `apply`, `kernel zen|default`.
+  `rustos-performance.service` applies it at boot, `61-rustos-power.rules` re-applies it when the charger is plugged in or
+  out (auto mode). It sets the power-profiles-daemon profile, CPU turbo on battery, the charge limit and the latency sysctls.
+- **rustos-game** wraps a game: FPS cap on battery (`BAT_FPS_CAP`, via MangoHud and `DXVK_FRAME_RATE`), GameMode only when
+  plugged in, optional FPS overlay, Proton/DXVK/Mesa/NVIDIA speed variables. Steam: `rustos-game %command%`.
+  `/etc/gamemode.ini` makes GameMode call `rustos-performance game-start/game-end` (performance profile while a game runs).
+
+## Hardware development: FPGA boards and DMA devices (3.1)
+
+Optional and off by default. It makes RustOS ready for real hardware; it does not emulate any.
+- `rustos-devhw` (`usr/local/bin`): `check` (`.debug dma`), `devices`, `usb`, `vfio bind|release|keep|forget|list`,
+  `access [--vfio] [user]`, `iommu-on`, `dkms [status|build [kernel]]`; `--machine` gives tab-separated output for
+  RustOS Center (`CHECK`, `PCI`, `USB`, `SUMMARY` lines). Every check is `supported`, `unavailable` (with a fix),
+  `untested` or `info`.
+- VFIO safety: binding needs an active IOMMU (an `iommu_group` for the device), refuses bridges (class 0x06),
+  `boot_vga` devices, devices with disks in use, groups with other devices on normal drivers, and refuses everything
+  while `vfio.enable_unsafe_noiommu_mode` is on. Binding uses `driver_override` + `drivers_probe` and checks the
+  result; `keep` stores `slot vendor:device` in `/etc/rustos/vfio-devices.conf` for `rustos-vfio.service`.
+  Nothing writes `iommu=off`, `iommu=pt` or no-IOMMU mode, and nothing uses `/dev/mem`.
+- Access: `70-rustos-fpga.rules` (`TAG+="uaccess"` for JTAG/debug adapters), `uucp` group for serial ports,
+  `71-rustos-vfio.rules` + `usr/lib/sysusers.d/rustos-dev.conf` (group `rustos-vfio`, empty by default) and a
+  memlock limit in `/etc/security/limits.d/90-rustos-vfio.conf` written by `access --vfio`.
+- Kernels: `rustos-performance kernel zen|lts|default|status`. `lts` installs `linux-lts linux-lts-headers dkms
+  linux-headers`, makes it the default (GRUB_TOP_LEVEL or a systemd-boot entry) and runs `rustos-devhw dkms build`.
+- Apps catalog group "FPGA and hardware"; RustOS Center page `devhw`; installer checklist (`DEVHW=fpga access lts`).
+- Guide: `usr/share/rustos/hardware-dev.txt`. Tests: `bash tests/run-all.sh` (fake sysfs/proc trees, no hardware needed).
+
 ## The website and the repository page
 
 The website (`rustos-site`, PHP) is a RustOS desktop: the fastfetch window can be dragged, there is a custom cursor, an

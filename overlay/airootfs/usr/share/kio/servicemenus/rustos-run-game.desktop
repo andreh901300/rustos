@@ -5,7 +5,7 @@ Actions=rungame;addexe;
 X-KDE-Priority=TopLevel
 
 [Desktop Action rungame]
-Name=Run as game (GameMode and MangoHud)
+Name=Run as game (RustOS game boost)
 Icon=applications-games
 Exec=/usr/local/bin/rustos-run-exe --game %f
 

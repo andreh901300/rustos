@@ -36,6 +36,10 @@ on_ac() {    # true on desktops/VMs (no battery) and laptops that are plugged in
   [ "$any" = 0 ] || [ "$ac" = 1 ]
 }
 
+# typed by hand in a terminal: update now (the battery / pause checks are only for the automatic daily run)
+MODE=${1:-}
+[ -z "$MODE" ] && [ -t 0 ] && [ -t 1 ] && MODE=--now
+set -- "$MODE"
 HOLD=/var/lib/rustos/update-hold
 if [ "${1:-}" != "--now" ]; then
   if [ -r "$HOLD" ] && [ "$(date +%s)" -lt "$(cat "$HOLD")" ]; then

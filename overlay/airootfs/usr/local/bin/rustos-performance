@@ -1,0 +1,300 @@
+#!/usr/bin/env bash
+# RustOS power and performance manager (RustOS 3.0). Settings live in /etc/rustos/performance.conf.
+#   rustos-performance status            what is active right now
+#   rustos-performance mode <m>          auto | performance | balanced | battery
+#   rustos-performance set KEY VALUE     change one setting (see the conf file), then apply
+#   rustos-performance apply             apply the settings now (also at every start, and on plug / unplug)
+#   rustos-performance kernel zen|lts|default|status   zen = low-latency kernel for games, lts = developer kernel
+#                                        with headers and DKMS (GRUB and systemd-boot; the normal kernel stays as a backup)
+#   rustos-performance game-start|game-end  used by GameMode when a game starts / stops (runs as you)
+set -u
+CONF=/etc/rustos/performance.conf
+STATE=/run/rustos-power-state
+
+defaults() {
+  MODE=auto; AC_PROFILE=performance; BAT_PROFILE="power-saver"; BAT_TURBO=1
+  BAT_FPS_CAP=60; AC_FPS_CAP=0; GAME_BOOST=1; LATENCY_TWEAKS=1; SHOW_FPS=0; CHARGE_LIMIT=0
+}
+load() {
+  defaults
+  # shellcheck disable=SC1090
+  [ -r "$CONF" ] && . "$CONF"
+}
+write_conf() {
+  mkdir -p "${CONF%/*}"
+  cat > "$CONF.new" <<EOF
+# RustOS power and performance settings. Change them in RustOS Center (Gaming / Battery), or with:
+#   sudo rustos-performance set KEY VALUE
+MODE=$MODE                 # auto (switch on plug/unplug) | performance | balanced | battery
+AC_PROFILE=$AC_PROFILE     # plugged in (auto mode): performance | balanced
+BAT_PROFILE=$BAT_PROFILE   # on battery (auto mode): balanced | power-saver
+BAT_TURBO=$BAT_TURBO               # 0 = CPU turbo off on battery (much longer battery, a bit slower)
+BAT_FPS_CAP=$BAT_FPS_CAP           # FPS cap for games on battery (0 = no cap). Used by rustos-game / Run as game
+AC_FPS_CAP=$AC_FPS_CAP             # FPS cap when plugged in (0 = no cap)
+GAME_BOOST=$GAME_BOOST             # 1 = GameMode boost for games when plugged in
+LATENCY_TWEAKS=$LATENCY_TWEAKS     # 1 = gaming latency tweaks (split-lock off, watchdog off, bigger map count)
+SHOW_FPS=$SHOW_FPS                 # 1 = show the MangoHud FPS overlay in games
+CHARGE_LIMIT=$CHARGE_LIMIT         # stop charging at this % to make the battery last years (0 = off; not all laptops)
+EOF
+  mv "$CONF.new" "$CONF"
+}
+
+on_battery() {   # true when a battery exists and no charger is connected
+  local s any=0 ac=0
+  for s in /sys/class/power_supply/*; do
+    [ -r "$s/type" ] || continue
+    case "$(cat "$s/type")" in
+      Battery) any=1 ;;
+      Mains|USB|USB_C|USB_PD) [ "$(cat "$s/online" 2>/dev/null)" = 1 ] && ac=1 ;;
+    esac
+  done
+  [ "$any" = 1 ] && [ "$ac" = 0 ]
+}
+
+set_turbo() { # 1 on, 0 off
+  local f
+  if [ -w /sys/devices/system/cpu/intel_pstate/no_turbo ]; then
+    echo $(( 1 - $1 )) > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null
+  elif [ -w /sys/devices/system/cpu/cpufreq/boost ]; then
+    echo "$1" > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null
+  else
+    for f in /sys/devices/system/cpu/cpufreq/policy*/boost; do [ -w "$f" ] && echo "$1" > "$f" 2>/dev/null; done
+  fi
+  return 0
+}
+turbo_state() {
+  if [ -r /sys/devices/system/cpu/intel_pstate/no_turbo ]; then [ "$(cat /sys/devices/system/cpu/intel_pstate/no_turbo)" = 0 ] && echo on || echo off
+  elif [ -r /sys/devices/system/cpu/cpufreq/boost ]; then [ "$(cat /sys/devices/system/cpu/cpufreq/boost)" = 1 ] && echo on || echo off
+  else
+    local f; f=$(ls /sys/devices/system/cpu/cpufreq/policy*/boost 2>/dev/null | head -n1)
+    if [ -n "$f" ]; then [ "$(cat "$f")" = 1 ] && echo on || echo off; else echo "not supported"; fi
+  fi
+}
+
+set_profile() { command -v powerprofilesctl >/dev/null 2>&1 && powerprofilesctl set "$1" >/dev/null 2>&1; return 0; }
+
+latency_tweaks() { # 1 on, 0 off (back to the kernel defaults)
+  if [ "$1" = 1 ]; then
+    sysctl -q -w kernel.split_lock_mitigate=0 2>/dev/null       # games that do split locks stop stuttering
+    sysctl -q -w vm.max_map_count=2147483642 2>/dev/null        # some big games need many memory maps
+    sysctl -q -w vm.compaction_proactiveness=0 2>/dev/null      # no background memory shuffling mid-game
+    sysctl -q -w vm.watermark_boost_factor=0 2>/dev/null
+    sysctl -q -w kernel.nmi_watchdog=0 2>/dev/null              # less interrupts, a bit less power
+    printf '# RustOS gaming latency tweaks: no hardware watchdog (not needed on a PC)\nblacklist iTCO_wdt\nblacklist sp5100_tco\n' \
+      > /etc/modprobe.d/rustos-nowatchdog.conf
+  else
+    sysctl -q -w kernel.split_lock_mitigate=1 2>/dev/null
+    sysctl -q -w vm.max_map_count=1048576 2>/dev/null
+    sysctl -q -w vm.compaction_proactiveness=20 2>/dev/null
+    sysctl -q -w vm.watermark_boost_factor=15000 2>/dev/null
+    sysctl -q -w kernel.nmi_watchdog=1 2>/dev/null
+    rm -f /etc/modprobe.d/rustos-nowatchdog.conf
+  fi
+  return 0
+}
+
+charge_limit() { # percent, 0 = off
+  local b
+  for b in /sys/class/power_supply/BAT*; do
+    [ -w "$b/charge_control_end_threshold" ] || continue
+    if [ "$1" -gt 0 ] 2>/dev/null; then echo "$1" > "$b/charge_control_end_threshold"; else echo 100 > "$b/charge_control_end_threshold"; fi
+  done 2>/dev/null
+  return 0
+}
+
+apply() {
+  load
+  local power=ac; on_battery && power=battery
+  local want
+  case "$MODE" in
+    performance) want=performance ;;
+    balanced)    want=balanced ;;
+    battery)     want=battery ;;
+    *)           want=$([ "$power" = battery ] && echo battery || echo ac) ;;
+  esac
+  # nothing changed since last time (udev calls this often): stop here
+  local key="$MODE/$power/$AC_PROFILE/$BAT_PROFILE/$BAT_TURBO/$LATENCY_TWEAKS/$CHARGE_LIMIT"
+  if [ "${1:-}" = --if-changed ] && [ "$(cat "$STATE" 2>/dev/null)" = "$key" ]; then return 0; fi
+  echo "$key" > "$STATE"
+  case "$want" in
+    performance) set_profile performance; set_turbo 1 ;;
+    balanced)    set_profile balanced; set_turbo 1 ;;
+    battery)     set_profile "$BAT_PROFILE"; set_turbo "$BAT_TURBO"
+                 sysctl -q -w vm.dirty_writeback_centisecs=1500 2>/dev/null ;;
+    ac)          set_profile "$AC_PROFILE"; set_turbo 1
+                 sysctl -q -w vm.dirty_writeback_centisecs=500 2>/dev/null ;;
+  esac
+  latency_tweaks "$LATENCY_TWEAKS"
+  charge_limit "$CHARGE_LIMIT"
+  return 0
+}
+
+status() {
+  load
+  local power=plugged-in; on_battery && power="on battery"
+  [ -d /sys/class/power_supply ] && ! ls /sys/class/power_supply/BAT* >/dev/null 2>&1 && power="desktop (no battery)"
+  echo "Mode: $MODE"
+  echo "Power: $power"
+  echo "Power profile: $(powerprofilesctl get 2>/dev/null || echo unknown)"
+  echo "CPU turbo: $(turbo_state)"
+  echo "CPU governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo unknown)"
+  echo "FPS cap: on battery ${BAT_FPS_CAP:-0}, plugged in ${AC_FPS_CAP:-0} (0 = none)"
+  echo "Game boost: $GAME_BOOST   Latency tweaks: $LATENCY_TWEAKS   FPS overlay: $SHOW_FPS"
+  echo "Charge limit: $([ "${CHARGE_LIMIT:-0}" -gt 0 ] && echo "$CHARGE_LIMIT%" || echo off)$(ls /sys/class/power_supply/BAT*/charge_control_end_threshold >/dev/null 2>&1 || echo ' (this laptop does not support it)')"
+  echo "Kernel: $(uname -r)"
+}
+
+# ---- kernels: the normal one (linux) plus one optional extra that becomes the default boot entry
+#   zen  low-latency kernel for games      lts  developer kernel: Linux LTS + headers + DKMS (for vendor and own drivers)
+kernel_ver() {   # kernel_ver PKGBASE -> the installed version folder in /usr/lib/modules
+  local d
+  for d in /usr/lib/modules/*/; do [ "$(cat "$d/pkgbase" 2>/dev/null)" = "$1" ] && { d=${d%/}; echo "${d##*/}"; return 0; }; done
+  return 1
+}
+default_kernel() {   # which package the boot loader starts by default
+  local bl=$1 v=""
+  case "$bl" in
+    grub)         v=$(sed -n 's#^GRUB_TOP_LEVEL="/boot/vmlinuz-\(.*\)"#\1#p' /etc/default/grub 2>/dev/null | tail -n1) ;;
+    systemd-boot) v=$(sed -n 's/^default rustos-\(.*\)\.conf/linux-\1/p' /boot/loader/loader.conf 2>/dev/null) ;;
+  esac
+  echo "${v:-linux}"
+}
+kernel_status() {
+  local bl=$1 d pb v def
+  def=$(default_kernel "$bl")
+  echo "Boot loader: ${bl:-unknown}   default kernel: $def   running: $(uname -r)"
+  for d in /usr/lib/modules/*/; do
+    pb=$(cat "$d/pkgbase" 2>/dev/null) || continue
+    v=${d%/}; v=${v##*/}
+    printf '  %-12s %-28s %s%s\n' "$pb" "$v" "$([ -d "$d/build" ] && echo "headers: yes" || echo "headers: no ")" \
+      "$([ "$v" = "$(uname -r)" ] && echo "   (running)")"
+  done
+  if command -v dkms >/dev/null 2>&1; then echo "DKMS:"; dkms status 2>/dev/null | sed 's/^/  /'; [ -n "$(dkms status 2>/dev/null)" ] || echo "  (no modules)"; fi
+}
+kernel_use() {   # kernel_use zen|lts BOOTLOADER
+  local k=$1 bl=$2 pkg="linux-$1" what pk kv
+  case "$k" in zen) what="the low-latency zen kernel" ;; lts) what="the LTS developer kernel" ;; esac
+  echo "== Installing $what ($pkg)"
+  pk=("$pkg" "$pkg-headers")
+  # developer kernel: DKMS, and headers for the normal kernel too, so out-of-tree drivers also work on the backup entry
+  [ "$k" = lts ] && pk+=(dkms linux-headers)
+  # drivers that are built with DKMS need headers for every kernel
+  if pacman -Q nvidia-open >/dev/null 2>&1; then pk+=(nvidia-open-dkms dkms linux-headers); pacman -Rdd --noconfirm nvidia-open >/dev/null 2>&1; fi
+  if command -v dkms >/dev/null 2>&1 && [ -n "$(dkms status 2>/dev/null)" ]; then pk+=(linux-headers); fi
+  pacman -S --needed --noconfirm "${pk[@]}" || { echo "The install failed (see above). Nothing was changed in the boot menu."; return 1; }
+  case "$bl" in
+    grub)
+      sed -i '/^GRUB_TOP_LEVEL=/d' /etc/default/grub
+      echo "GRUB_TOP_LEVEL=\"/boot/vmlinuz-$pkg\"" >> /etc/default/grub
+      grub-mkconfig -o /boot/grub/grub.cfg ;;
+    systemd-boot)
+      local src=/boot/loader/entries/rustos.conf
+      [ -f "$src" ] && sed "s#vmlinuz-linux\$#vmlinuz-$pkg#; s#initramfs-linux\.img#initramfs-$pkg.img#; s#^title .*#title   RustOS ($k kernel)#" \
+        "$src" > "/boot/loader/entries/rustos-$k.conf"
+      sed -i "s/^default .*/default rustos-$k.conf/" /boot/loader/loader.conf ;;
+    *) echo "This boot loader ($bl) needs $pkg added to its menu by hand. The normal kernel stays the default." ;;
+  esac
+  # build the DKMS modules for the new kernel now, so a problem shows up here and not after the restart
+  if command -v dkms >/dev/null 2>&1 && kv=$(kernel_ver "$pkg"); then
+    if [ -n "$(dkms status 2>/dev/null)" ]; then
+      if [ -x /usr/local/bin/rustos-devhw ]; then /usr/local/bin/rustos-devhw dkms build "$kv" || echo "!! Some DKMS modules did not build for $kv (see above). The normal kernel still has them."
+      else dkms autoinstall -k "$kv" || echo "!! Some DKMS modules did not build for $kv."; fi
+    else
+      echo "DKMS is ready for $kv (no out-of-tree modules added yet)."
+    fi
+  fi
+  echo "Done. Restart to use $what. The normal kernel stays in the boot menu as a backup."
+}
+kernel_default() {
+  local bl=$1 pkg k left=""
+  case "$bl" in
+    grub) sed -i '/^GRUB_TOP_LEVEL=/d' /etc/default/grub; grub-mkconfig -o /boot/grub/grub.cfg ;;
+    systemd-boot) sed -i 's/^default .*/default rustos.conf/' /boot/loader/loader.conf ;;
+  esac
+  for k in zen lts; do
+    pkg="linux-$k"
+    pacman -Q "$pkg" >/dev/null 2>&1 || continue
+    if [ "$(kernel_ver "$pkg")" = "$(uname -r)" ]; then
+      echo "$pkg is running right now, so it stays installed until you restart."
+      echo "After the restart you can remove it with: sudo pacman -Rns $pkg $pkg-headers"
+      left="$left $pkg"; continue
+    fi
+    rm -f "/boot/loader/entries/rustos-$k.conf"
+    pacman -Rns --noconfirm "$pkg" "$pkg-headers" 2>/dev/null || pacman -Rns --noconfirm "$pkg"
+  done
+  # back to the prebuilt NVIDIA driver only when no extra kernel is left
+  if [ -z "$left" ] && pacman -Q nvidia-open-dkms >/dev/null 2>&1; then
+    pacman -Rdd --noconfirm nvidia-open-dkms && pacman -S --noconfirm nvidia-open
+  fi
+  echo "Done. Restart to use the normal kernel again."
+}
+kernel() {
+  local bl=""
+  bl=$(sed -n 's/^BOOTLOADER=//p' /etc/rustos/bootloader.conf 2>/dev/null)
+  case "${1:-status}" in
+    status) kernel_status "$bl"; return 0 ;;
+  esac
+  [ "$(uname -m)" = x86_64 ] || { echo "Changing the kernel is only for PCs (the ARM edition uses linux-aarch64)."; return 1; }
+  case "$1" in
+    zen|lts) kernel_use "$1" "$bl" ;;
+    default) kernel_default "$bl" ;;
+    *) echo "Use: rustos-performance kernel status | zen | lts | default"; return 2 ;;
+  esac
+}
+
+game_start() {   # runs as you (GameMode custom script)
+  load
+  on_battery && return 0
+  [ "$GAME_BOOST" = 1 ] || return 0
+  local run="${XDG_RUNTIME_DIR:-/tmp}/rustos-game-profile"
+  [ -e "$run" ] || powerprofilesctl get > "$run" 2>/dev/null
+  powerprofilesctl set performance 2>/dev/null
+  return 0
+}
+game_end() {
+  local run="${XDG_RUNTIME_DIR:-/tmp}/rustos-game-profile"
+  [ -r "$run" ] && powerprofilesctl set "$(cat "$run")" 2>/dev/null
+  rm -f "$run"
+  return 0
+}
+
+need_root() { [ "$(id -u)" = 0 ] || exec sudo "$0" "$@"; }
+
+case "${1:-status}" in
+  status)     status ;;
+  apply)      need_root "$@"; apply ;;
+  auto)       [ "$(id -u)" = 0 ] || exit 0; apply --if-changed ;;
+  mode)       need_root "$@"; load
+              case "${2:-}" in auto|performance|balanced|battery) MODE=$2 ;; *) echo "Use: mode auto|performance|balanced|battery"; exit 2 ;; esac
+              write_conf; apply; echo "Mode: $MODE" ;;
+  set)        need_root "$@"; load
+              k=${2:-}; v=${3:-}
+              case "$k" in
+                AC_PROFILE|BAT_PROFILE) case "$v" in performance|balanced|power-saver) ;; *) echo "bad value"; exit 2 ;; esac ;;
+                BAT_TURBO|GAME_BOOST|LATENCY_TWEAKS|SHOW_FPS) case "$v" in 0|1) ;; *) echo "use 0 or 1"; exit 2 ;; esac ;;
+                BAT_FPS_CAP|AC_FPS_CAP|CHARGE_LIMIT) case "$v" in ''|*[!0-9]*) echo "use a number"; exit 2 ;; esac ;;
+                *) echo "Unknown setting: $k"; exit 2 ;;
+              esac
+              printf -v "$k" '%s' "$v"
+              write_conf; apply; echo "$k=$v" ;;
+  setmany)    # setmany KEY=VALUE KEY=VALUE ...  (RustOS Center: one password for all changes)
+              need_root "$@"; load; shift
+              for kv in "$@"; do
+                k=${kv%%=*}; v=${kv#*=}
+                case "$k" in
+                  MODE) case "$v" in auto|performance|balanced|battery) ;; *) continue ;; esac ;;
+                  AC_PROFILE|BAT_PROFILE) case "$v" in performance|balanced|power-saver) ;; *) continue ;; esac ;;
+                  BAT_TURBO|GAME_BOOST|LATENCY_TWEAKS|SHOW_FPS) case "$v" in 0|1) ;; *) continue ;; esac ;;
+                  BAT_FPS_CAP|AC_FPS_CAP|CHARGE_LIMIT) case "$v" in ''|*[!0-9]*) continue ;; esac ;;
+                  *) continue ;;
+                esac
+                printf -v "$k" '%s' "$v"
+              done
+              write_conf; apply; echo "Saved." ;;
+  kernel)     [ "${2:-status}" = status ] || need_root "$@"; kernel "${2:-status}" ;;
+  game-start) game_start ;;
+  game-end)   game_end ;;
+  on-battery) on_battery ;;
+  get)        load; k=${2:-MODE}; echo "${!k:-}" ;;
+  *) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

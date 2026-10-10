@@ -100,8 +100,12 @@ cd "$(dirname "$f")" || true
 export WINEDEBUG="${RUSTOS_WINEDEBUG:--all}"   # the EXE Center sets this to show Wine errors in its log
 launch=(wine)
 if [ "$game" = 1 ]; then
-  command -v gamemoderun >/dev/null 2>&1 && launch=(gamemoderun "${launch[@]}")
-  command -v mangohud >/dev/null 2>&1 && launch=(mangohud "${launch[@]}")
+  # rustos-game: GameMode when plugged in, FPS cap on battery, FPS overlay if you turned it on (RustOS Center)
+  if [ -x /usr/local/bin/rustos-game ]; then launch=(/usr/local/bin/rustos-game "${launch[@]}")
+  else
+    command -v gamemoderun >/dev/null 2>&1 && launch=(gamemoderun "${launch[@]}")
+    command -v mangohud >/dev/null 2>&1 && launch=(mangohud "${launch[@]}")
+  fi
 fi
 
 case "${f,,}" in

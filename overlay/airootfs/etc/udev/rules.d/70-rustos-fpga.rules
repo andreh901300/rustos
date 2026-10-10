@@ -1,0 +1,19 @@
+# RustOS: FPGA programming cables and JTAG / SWD debug adapters (rustos-devhw).
+# TAG+="uaccess" gives access only to the person logged in at this PC, only while their session is active:
+# no extra group, nothing for remote logins, nothing for other users. (This file must sort before 73-seat-late.rules.)
+# USB serial consoles (/dev/ttyUSB*, /dev/ttyACM*) are not changed here: they stay with the "uucp" group
+# (rustos-devhw access <user> adds you to it).
+ACTION=="remove", GOTO="rustos_fpga_end"
+SUBSYSTEM!="usb", GOTO="rustos_fpga_end"
+ENV{DEVTYPE}!="usb_device", GOTO="rustos_fpga_end"
+
+# FTDI chips used on most FPGA boards and JTAG adapters (Digilent, iCEBreaker, Tang Nano, ULX3S, ...)
+ATTR{idVendor}=="0403", ATTR{idProduct}=="6010|6011|6014|6015|6001", TAG+="uaccess", ENV{ID_RUSTOS_FPGA}="1"
+# AMD/Xilinx platform cables, Intel/Altera USB-Blaster, Digilent cables, SEGGER J-Link (vendors that only make such tools)
+ATTR{idVendor}=="03fd|09fb|1443|1366", TAG+="uaccess", ENV{ID_RUSTOS_FPGA}="1"
+# Black Magic Probe, Raspberry Pi Debug Probe, Arm DAPLink (CMSIS-DAP)
+ATTR{idVendor}=="1d50", ATTR{idProduct}=="6018", TAG+="uaccess", ENV{ID_RUSTOS_FPGA}="1"
+ATTR{idVendor}=="2e8a", ATTR{idProduct}=="000c", TAG+="uaccess", ENV{ID_RUSTOS_FPGA}="1"
+ATTR{idVendor}=="0d28", ATTR{idProduct}=="0204", TAG+="uaccess", ENV{ID_RUSTOS_FPGA}="1"
+
+LABEL="rustos_fpga_end"

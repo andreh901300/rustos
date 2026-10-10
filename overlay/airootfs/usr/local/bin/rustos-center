@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# RustOS Center: RustOS's own settings app (RustOS 3.0). Start it from the menu ("RustOS Center") or run:
+#   rustos-center                   the window
+#   rustos-center --page <page>     open one page: home updates apps gaming power antivirus education look mods windows devhw system
+#   rustos-center --scan <paths>    scan files for viruses
+#   rustos-center --can-start       exit 0 when the window can open here (used by the other RustOS apps)
+# The RustOS apps (Update Center, Apps, Gaming, Antivirus, Education, Switching from Windows) open their page here.
+# The old pop-up menus stay as a backup: they open when the window cannot start, or with RUSTOS_CLASSIC=1.
+GUI=/usr/share/rustos/center/rustos_center.py
+LOG="${XDG_CACHE_HOME:-$HOME/.cache}/rustos-center/window.log"
+
+can_start() {
+  [ -r "$GUI" ] || return 1
+  [ -d /run/archiso ] && return 1                     # the live disk keeps the simple menus
+  [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] || return 1
+  [ "$(id -u)" != 0 ] || return 1                     # never as root (the window asks for the password itself)
+  python3 -c 'import PyQt6.QtWidgets, PyQt6.QtNetwork' 2>/dev/null
+}
+
+[ "${1:-}" = --can-start ] && { can_start; exit $?; }
+
+# the classic menu for a page (when the window cannot start)
+classic() {
+  local page=home prev=""
+  for a in "$@"; do [ "$prev" = --page ] && page=$a; prev=$a; done
+  case " $* " in *" --scan "*) page=scan ;; esac
+  export RUSTOS_CLASSIC=1
+  case "$page" in
+    apps)      exec /usr/local/bin/rustos-apps ;;
+    gaming)    exec /usr/local/bin/rustos-gaming ;;
+    antivirus) exec /usr/local/bin/rustos-antivirus ;;
+    scan)      shift_to_scan "$@" ;;
+    education) exec /usr/local/bin/rustos-education ;;
+    windows)   exec /usr/local/bin/rustos-switch ;;
+    look)      exec /usr/local/bin/rustos-ipad-mode ;;
+    power)     exec konsole --hold -e /usr/local/bin/rustos-performance status ;;
+    devhw)     exec konsole --hold -e /usr/local/bin/rustos-devhw check ;;
+    mods|system) exec konsole -e /usr/local/bin/rustos-debug mainmod ;;
+    *)         exec /usr/local/bin/rustos-update-center ;;
+  esac
+}
+shift_to_scan() {
+  while [ "$#" -gt 0 ] && [ "$1" != --scan ]; do shift; done
+  shift
+  exec /usr/local/bin/rustos-antivirus --scan "$@"
+}
+
+if ! can_start; then
+  if [ -d /run/archiso ] || [ "$(id -u)" = 0 ]; then classic "$@"; fi
+  kdialog --title "RustOS Center" --passivepopup "The RustOS Center window needs python-pyqt6. Opening the classic menu. (Fix: .debug fix exe)" 8 2>/dev/null
+  classic "$@"
+fi
+
+mkdir -p "${LOG%/*}"
+start=$(date +%s)
+python3 "$GUI" "$@" 2>>"$LOG" && exit 0
+# it crashed: fall back only if it died right away (a crash later should not pop up a second window)
+if [ $(( $(date +%s) - start )) -lt 5 ]; then
+  kdialog --title "RustOS Center" --passivepopup "RustOS Center could not start. Opening the classic menu. (Details: $LOG)" 8 2>/dev/null
+  classic "$@"
+fi
+exit 1

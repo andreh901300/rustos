@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Start a game the RustOS way: GameMode boost when plugged in, FPS cap on battery (saves a lot of battery),
+# optional FPS overlay, and a few speed settings for Proton / DXVK / Mesa.
+# Steam: right-click a game, Properties, Launch Options:   rustos-game %command%
+# Anything else:                                             rustos-game ./game
+# Settings: RustOS Center -> Gaming / Battery   (or /etc/rustos/performance.conf)
+[ "$#" -gt 0 ] || { echo "Use: rustos-game <command>   (Steam launch options: rustos-game %command%)"; exit 2; }
+
+BAT_FPS_CAP=60; AC_FPS_CAP=0; GAME_BOOST=1; SHOW_FPS=0
+# shellcheck disable=SC1091
+[ -r /etc/rustos/performance.conf ] && . /etc/rustos/performance.conf
+
+if /usr/local/bin/rustos-performance on-battery 2>/dev/null; then battery=1; cap=${BAT_FPS_CAP:-0}; else battery=0; cap=${AC_FPS_CAP:-0}; fi
+
+# speed settings (harmless when a game does not use them)
+export mesa_glthread=true                    # OpenGL games: threaded driver on AMD/Intel
+export __GL_THREADED_OPTIMIZATIONS=1         # the same for NVIDIA
+export __GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1 # keep the NVIDIA shader cache: less stutter next time
+export PROTON_ENABLE_NVAPI=1                 # DLSS and Reflex in Proton games on NVIDIA
+export DXVK_ASYNC=1                          # fewer shader stutters with DXVK builds that support it
+[ "${cap:-0}" -gt 0 ] 2>/dev/null && export DXVK_FRAME_RATE="$cap"   # DXVK games cap themselves (no overlay needed)
+
+launch=()
+if command -v mangohud >/dev/null 2>&1 && { [ "${SHOW_FPS:-0}" = 1 ] || [ "${cap:-0}" -gt 0 ]; }; then
+  conf=""
+  [ "${cap:-0}" -gt 0 ] && conf="fps_limit=$cap"
+  if [ "${SHOW_FPS:-0}" = 1 ]; then conf="${conf:+$conf,}fps,frametime,cpu_temp,gpu_temp,battery,position=top-left"
+  else conf="${conf:+$conf,}no_display"; fi
+  export MANGOHUD_CONFIG="$conf"
+  launch+=(mangohud)
+fi
+# GameMode only when plugged in (on battery it would burn the battery for a few extra FPS)
+if [ "$battery" = 0 ] && [ "${GAME_BOOST:-1}" = 1 ] && command -v gamemoderun >/dev/null 2>&1; then
+  launch=(gamemoderun "${launch[@]}")
+fi
+exec "${launch[@]}" "$@"

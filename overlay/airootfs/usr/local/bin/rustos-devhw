@@ -1,0 +1,653 @@
+#!/usr/bin/env bash
+# RustOS hardware development helper (RustOS 3.1): for people who build or test real DMA-capable PCIe devices and
+# FPGA boards. It checks what the PC and the Linux kernel support, gives a PCIe device to VFIO (protected by the
+# IOMMU) for user-space drivers and development VMs, and sets up USB serial / JTAG access for FPGA boards.
+#
+# What it never does: turn the IOMMU off, use VFIO "no-IOMMU" mode, add iommu=pt, or touch /dev/mem.
+# It does not replace hardware either: a real DMA device or FPGA board (and its driver) is still needed.
+#
+#   rustos-devhw check [--machine]        everything below in one report (.debug dma)
+#   rustos-devhw devices [--machine]      PCIe devices (lspci -nnk): driver, IOMMU group, can VFIO take it
+#   rustos-devhw usb [--machine]          FPGA / JTAG / debug adapters and serial ports on USB, and your access
+#   rustos-devhw vfio bind <slot>         give one PCIe device to VFIO until the next restart     (root)
+#   rustos-devhw vfio release <slot>      give it back to its normal driver                        (root)
+#   rustos-devhw vfio keep|forget <slot>  do "bind" at every start / stop doing that                 (root)
+#   rustos-devhw vfio list                devices RustOS gives to VFIO at every start
+#   rustos-devhw access [--vfio] [--remove] [user]   serial ports (group uucp); --vfio adds the rustos-vfio group
+#                                         and a locked-memory limit for VFIO DMA buffers             (root)
+#   rustos-devhw iommu-on                 Intel PCs: tell Linux to use the IOMMU (adds intel_iommu=on)  (root)
+#   rustos-devhw dkms [status]            out-of-tree driver modules (DKMS) for every installed kernel
+#   rustos-devhw dkms build [kernel]      build them for a kernel (default: the running one)           (root)
+# <slot> is the PCI address from "rustos-devhw devices", like 0000:03:00.0 (03:00.0 works too).
+set -u
+
+# ------------------------------------------------------------------ paths (tests point these at a fake system)
+R=${RUSTOS_DEVHW_ROOT:-}
+SYS=$R/sys; PROC=$R/proc; MODS=$R/usr/lib/modules; ETC=$R/etc; DEVD=$R/dev
+KREL=${RUSTOS_DEVHW_KREL:-$(uname -r)}
+ARCH=${RUSTOS_DEVHW_ARCH:-$(uname -m)}
+LSPCI=${RUSTOS_DEVHW_LSPCI:-lspci}
+VFIO_CONF=$ETC/rustos/vfio-devices.conf
+BLCONF=$ETC/rustos/bootloader.conf
+LIMITS=$ETC/security/limits.d/90-rustos-vfio.conf
+ME=rustos-devhw
+MACHINE=0
+
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  B=$'\e[1m'; D=$'\e[2m'; R0=$'\e[0m'; OR=$'\e[38;5;208m'; GR=$'\e[38;5;42m'; RD=$'\e[38;5;203m'; YL=$'\e[38;5;221m'; CY=$'\e[38;5;37m'
+else
+  B=""; D=""; R0=""; OR=""; GR=""; RD=""; YL=""; CY=""
+fi
+have() { command -v "$1" >/dev/null 2>&1; }
+die()  { echo "$ME: $*" >&2; exit 1; }
+need_root() { [ "$(id -u)" = 0 ] || die "this needs root: sudo $ME $*"; }
+
+N_SUP=0; N_UNA=0; N_UNT=0
+# rep STATUS ITEM TEXT [FIX]     STATUS: supported | unavailable | untested | info
+rep() {
+  case "$1" in supported) N_SUP=$((N_SUP + 1)) ;; unavailable) N_UNA=$((N_UNA + 1)) ;; untested) N_UNT=$((N_UNT + 1)) ;; esac
+  if [ "$MACHINE" = 1 ]; then
+    printf 'CHECK\t%s\t%s\t%s\t%s\n' "$2" "$1" "$3" "${4:-}"
+    return
+  fi
+  local c
+  case "$1" in
+    supported)   c="${GR}[supported]  " ;;
+    unavailable) c="${RD}[unavailable]" ;;
+    untested)    c="${YL}[untested]   " ;;
+    *)           c="${D}[info]       " ;;
+  esac
+  printf '  %s%s %-24s %s\n' "$c" "$R0" "$2" "$3"
+  [ -n "${4:-}" ] && printf '                %s-> %s%s\n' "$CY" "$4" "$R0"
+  return 0
+}
+section() { [ "$MACHINE" = 1 ] || printf '\n%s%s%s%s\n' "$B" "$OR" "$1" "$R0"; }
+
+# ------------------------------------------------------------------ the running kernel
+pkgbase() { cat "$MODS/${1:-$KREL}/pkgbase" 2>/dev/null || echo "?"; }
+
+KCONF=""; KCONF_SRC=""
+kconf_load() {
+  if [ -r "$PROC/config.gz" ]; then KCONF=$(gzip -dc "$PROC/config.gz" 2>/dev/null); KCONF_SRC=/proc/config.gz
+  elif [ -r "$R/boot/config-$KREL" ]; then KCONF=$(cat "$R/boot/config-$KREL"); KCONF_SRC=/boot/config-$KREL
+  elif [ -r "$MODS/$KREL/build/.config" ]; then KCONF=$(cat "$MODS/$KREL/build/.config"); KCONF_SRC="kernel headers"
+  fi
+}
+kc() {   # kc NAME -> y | m | n | ? (unknown)  (or the value for non-bool options)
+  [ -n "$KCONF" ] || { echo '?'; return; }
+  local l; l=$(grep -E "^(# )?CONFIG_$1[= ]" <<<"$KCONF" | head -n 1)
+  case "$l" in
+    "CONFIG_$1=y") echo y ;;
+    "CONFIG_$1=m") echo m ;;
+    "CONFIG_$1="*) echo "${l#*=}" ;;
+    *) echo n ;;
+  esac
+}
+
+# all module names the running kernel has as files (from modules.dep), "-" written as "_"
+MODLIST=""
+mods_load() {
+  [ -r "$MODS/$KREL/modules.dep" ] && MODLIST=$(sed 's/:.*//; s#.*/##; s/\.ko.*//' "$MODS/$KREL/modules.dep" | tr '-' '_')
+}
+mod_state() {   # mod_state NAME -> loaded | builtin | available | missing | nomoddir
+  local n=${1//-/_}
+  if [ -e "$SYS/module/$n/initstate" ]; then echo loaded; return; fi
+  [ -d "$MODS/$KREL" ] || { echo nomoddir; return; }
+  if [ -r "$MODS/$KREL/modules.builtin" ] && sed 's#.*/##; s/\.ko$//' "$MODS/$KREL/modules.builtin" | tr '-' '_' | grep -qx "$n"; then
+    echo builtin; return
+  fi
+  if grep -qx "$n" <<<"$MODLIST"; then echo available; else echo missing; fi
+}
+mod_usable() { case "$(mod_state "$1")" in loaded|builtin|available) return 0 ;; esac; return 1; }
+
+cmdline() { cat "$PROC/cmdline" 2>/dev/null; }
+has_arg() { case " $(cmdline) " in *" $1 "*) return 0 ;; esac; return 1; }
+cpu_vendor() {
+  case "$(grep -m1 '^vendor_id' "$PROC/cpuinfo" 2>/dev/null)" in
+    *GenuineIntel*) echo intel ;; *AuthenticAMD*) echo amd ;; *) echo other ;;
+  esac
+}
+virt() { local v; v=$(systemd-detect-virt 2>/dev/null); [ "$v" = none ] && v=""; echo "$v"; }
+
+# ------------------------------------------------------------------ IOMMU
+iommu_groups() { find "$SYS/kernel/iommu_groups" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l; }
+iommu_units()  { find "$SYS/class/iommu" -mindepth 1 -maxdepth 1 -printf '%f ' 2>/dev/null; }
+iommu_off_arg() { local a; for a in intel_iommu=off amd_iommu=off iommu=off; do has_arg "$a" && { echo "$a"; return 0; }; done; return 1; }
+iommu_active() { [ "$(iommu_groups)" -gt 0 ]; }
+noiommu_on() {
+  local p=$SYS/module/vfio/parameters/enable_unsafe_noiommu_mode
+  [ -r "$p" ] && case "$(cat "$p")" in Y|y|1) return 0 ;; esac
+  has_arg vfio.enable_unsafe_noiommu_mode=1 || has_arg vfio.enable_unsafe_noiommu_mode=Y
+}
+noiommu_configured() {   # someone put no-IOMMU mode into modprobe settings
+  grep -rlsE '^\s*options\s+vfio\b.*enable_unsafe_noiommu_mode\s*=\s*(1|Y|y)' "$ETC/modprobe.d" "$R/usr/lib/modprobe.d" 2>/dev/null | head -n 1
+}
+iommu_fix() {
+  local v; v=$(virt)
+  if [ -n "$v" ]; then echo "This is a virtual machine ($v): the host decides. Most hypervisors give guests no IOMMU, so use VFIO on the real PC instead."; return; fi
+  case "$ARCH" in x86_64) ;; *) echo "On this ARM device the firmware and the board decide; RustOS cannot turn an IOMMU on here."; return ;; esac
+  case "$(cpu_vendor)" in
+    intel) echo "Turn on VT-d (Intel Virtualization Technology for Directed I/O) in the firmware settings, then run: sudo $ME iommu-on and restart." ;;
+    amd)   echo "Turn on IOMMU / AMD-Vi (often next to SVM) in the firmware settings and restart. Linux uses it by itself on AMD." ;;
+    *)     echo "Turn on the IOMMU in the firmware settings and restart." ;;
+  esac
+}
+
+# ------------------------------------------------------------------ PCI devices
+norm_slot() {   # 03:00.0 -> 0000:03:00.0 ; prints nothing when it does not look like a slot
+  local s=${1,,}
+  [[ $s =~ ^[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$ ]] && s="0000:$s"
+  [[ $s =~ ^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$ ]] && echo "$s"
+}
+pdev() { echo "$SYS/bus/pci/devices/$1"; }
+pci_driver() { local l; l=$(readlink "$(pdev "$1")/driver" 2>/dev/null) && basename "$l"; }
+pci_group()  { local l; l=$(readlink "$(pdev "$1")/iommu_group" 2>/dev/null) && basename "$l"; }
+pci_class()  { cat "$(pdev "$1")/class" 2>/dev/null; }          # 0x030000
+pci_ids()    { local d; d=$(pdev "$1"); printf '%s:%s' "$(sed 's/^0x//' "$d/vendor" 2>/dev/null)" "$(sed 's/^0x//' "$d/device" 2>/dev/null)"; }
+is_bridge()  { case "$(pci_class "$1")" in 0x06*) return 0 ;; esac; return 1; }
+fpga_vendor() { case "${1%%:*}" in 10ee) echo "AMD/Xilinx" ;; 1172) echo "Intel/Altera" ;; 1204) echo "Lattice" ;; 1d0f) echo "Amazon (F1 FPGA)" ;; 1bad) echo "ReconfigureIO" ;; *) return 1 ;; esac; }
+
+# lspci -Dnnk -> one tab line per device: slot  class-code  vendor:device  name  driver  modules  ("-" = none,
+# because "read" would merge empty tab-separated fields)
+pci_list() {
+  command -v "$LSPCI" >/dev/null 2>&1 || return 0
+  "$LSPCI" -Dnnk 2>/dev/null | awk '
+    function d(x) { return x == "" ? "-" : x }
+    function flush() { if (slot != "") printf "%s\t%s\t%s\t%s\t%s\t%s\n", slot, d(cls), d(ids), d(name), d(drv), d(mods) }
+    /^[0-9a-f]/ {
+      flush(); slot=$1; drv=""; mods=""; line=$0; sub(/^[^ ]+ /, "", line)
+      cls=""; if (match(line, /\[[0-9a-f]{4}\]:/)) cls=substr(line, RSTART+1, 4)
+      ids=""; if (match(line, /\[[0-9a-f]{4}:[0-9a-f]{4}\]/)) ids=substr(line, RSTART+1, 9)
+      name=line; sub(/ \[[0-9a-f]{4}\]:/, ":", name); gsub(/ \[[0-9a-f]{4}:[0-9a-f]{4}\]/, "", name); sub(/ \(rev [0-9a-f]+\)/, "", name)
+      next }
+    /^\tKernel driver in use:/ { drv=$0; sub(/^\tKernel driver in use: */, "", drv); next }
+    /^\tKernel modules:/       { mods=$0; sub(/^\tKernel modules: */, "", mods); gsub(/, /, ",", mods); next }
+    END { flush() }'
+}
+
+# block devices that belong to a PCI device and are in use (mounted, swap, or under LUKS/LVM/RAID)
+busy_disks() {
+  local real b br n
+  real=$(readlink -f "$(pdev "$1")") || return 0
+  for b in "$SYS/class/block"/*; do
+    [ -e "$b" ] || continue
+    br=$(readlink -f "$b") || continue
+    case "$br" in "$real"/*) ;; *) continue ;; esac
+    n=${b##*/}
+    if grep -q "^/dev/$n " "$PROC/mounts" 2>/dev/null || grep -qE "^/dev/${n}[[:space:]]" "$PROC/swaps" 2>/dev/null \
+       || [ -n "$(ls -A "$br/holders" 2>/dev/null)" ]; then
+      echo "$n"
+    fi
+  done
+}
+
+# vfio_check SLOT -> prints why not (one reason per line) and returns 1, or returns 0
+vfio_check() {
+  local s=$1 g o od bad=0 disks
+  [ -d "$(pdev "$s")" ] || { echo "there is no PCI device $s (see: $ME devices)"; return 1; }
+  if noiommu_on; then echo "VFIO no-IOMMU (unsafe) mode is on: RustOS does not assign devices without IOMMU protection"; bad=1; fi
+  g=$(pci_group "$s")
+  if [ -z "$g" ]; then echo "the IOMMU is not active, so the device would not be protected. $(iommu_fix)"; return 1; fi
+  if is_bridge "$s"; then echo "it is a PCI bridge or host bridge (they are never given away)"; bad=1; fi
+  [ "$(cat "$(pdev "$s")/boot_vga" 2>/dev/null)" = 1 ] && { echo "it is the graphics card showing this screen"; bad=1; }
+  disks=$(busy_disks "$s" | tr '\n' ' ')
+  [ -n "$disks" ] && { echo "it holds disks that are in use: ${disks% }"; bad=1; }
+  for od in "$SYS/kernel/iommu_groups/$g/devices"/*; do
+    [ -e "$od" ] || continue
+    o=${od##*/}
+    [ "$o" = "$s" ] && continue
+    is_bridge "$o" && continue
+    case "$(pci_driver "$o")" in
+      ""|vfio-pci|pcieport) ;;
+      *) echo "IOMMU group $g also has $o (driver $(pci_driver "$o")). Every device in a group must go to VFIO together: give $o to VFIO first, or use another slot"; bad=1 ;;
+    esac
+  done
+  mod_usable vfio_pci || { echo "the vfio-pci module is not available for kernel $KREL"; bad=1; }
+  return $bad
+}
+
+kept() { [ -r "$VFIO_CONF" ] && grep -q "^$1 " "$VFIO_CONF"; }
+
+cmd_devices() {
+  local slot cls ids name drv mods g st verdict fix why assign kind
+  section "PCIe devices (lspci -nnk)"
+  if ! command -v "$LSPCI" >/dev/null 2>&1; then rep unavailable "PCI listing" "lspci is not installed" "sudo pacman -S pciutils"; return; fi
+  local list; list=$(pci_list)
+  if [ -z "$list" ]; then
+    rep untested "PCIe devices" "No PCIe devices are visible$( [ -n "$(virt)" ] && echo " (virtual machine: $(virt))")" \
+      "Nothing to check here. On a real PC this lists every card; in a VM only virtual devices appear."
+    return
+  fi
+  while IFS=$'\t' read -r slot cls ids name drv mods; do
+    [ "$drv" = - ] && drv=""; [ "$mods" = - ] && mods=""; [ "$cls" = - ] && cls=""
+    g=$(pci_group "$slot")
+    kind=""; fpga_vendor "$ids" >/dev/null && kind="FPGA ($(fpga_vendor "$ids")) "
+    if why=$(vfio_check "$slot" 2>&1); then assign=yes; why=""; else assign=no; why=$(head -n 1 <<<"$why"); fi
+    [ "$drv" = vfio-pci ] && { assign=bound; why=""; }
+    if [ "$MACHINE" = 1 ]; then
+      printf 'PCI\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$slot" "$ids" "$cls" "${drv:--}" "${mods:--}" "${g:--}" \
+        "$assign" "$why" "$name" "$(kept "$slot" && echo yes || echo no)"
+      continue
+    fi
+    fix=""
+    case "$cls" in 06*) st=info; verdict="bridge (never given away)" ;; *)
+      if [ "$drv" = vfio-pci ]; then st=supported; verdict="given to VFIO: /dev/vfio/$g"
+      elif [ -n "$drv" ]; then st=supported; verdict="driver: $drv"
+      elif [ -n "$mods" ]; then st=untested; verdict="has a driver ($mods) but it is not loaded"; fix="sudo modprobe ${mods%%,*}"
+      else st=unavailable; verdict="no Linux driver for this device"
+           fix="Needs a vendor or self-written driver (DKMS: $ME dkms), or VFIO for a user-space driver"
+      fi ;;
+    esac
+    rep "$st" "$slot" "${kind}${name} [$ids] - $verdict" "$fix"
+    case "$cls" in 06*) ;; *)
+      if [ "$assign" = yes ]; then printf '                %sVFIO: can be given to VFIO (IOMMU group %s)%s\n' "$D" "$g" "$R0"
+      elif [ "$assign" = no ]; then printf '                %sVFIO: no - %s%s\n' "$D" "$why" "$R0"; fi ;;
+    esac
+  done <<<"$list"
+}
+
+# ------------------------------------------------------------------ USB: FPGA boards, JTAG / debug adapters, serial
+# vendor:product (or vendor:*)  name
+KNOWN_USB="0403:6010 FTDI FT2232 JTAG/UART (Digilent, iCEBreaker, Tang Nano, many FPGA boards)
+0403:6011 FTDI FT4232 JTAG/UART
+0403:6014 FTDI FT232H JTAG
+0403:6015 FTDI FT231X (ULX3S and others)
+0403:6001 FTDI FT232R serial / bit-bang
+03fd:* AMD/Xilinx platform cable
+09fb:* Intel/Altera USB-Blaster
+1443:* Digilent programming cable
+1366:* SEGGER J-Link
+1d50:6018 Black Magic Probe
+2e8a:000c Raspberry Pi Debug Probe (CMSIS-DAP)
+0d28:0204 Arm DAPLink (CMSIS-DAP)"
+usb_name() {   # usb_name VID PID -> name or nothing
+  local k n
+  while read -r k n; do
+    case "$k" in "$1:$2"|"$1:*") echo "$n"; return 0 ;; esac
+  done <<<"$KNOWN_USB"
+  return 1
+}
+target_user() { echo "${SUDO_USER:-${PKEXEC_UID:+$(id -nu "$PKEXEC_UID" 2>/dev/null)}}"; }
+in_group() { id -nG "${2:-$(id -un)}" 2>/dev/null | tr ' ' '\n' | grep -qx "$1"; }
+
+cmd_usb() {
+  local d v p name node bus dev acc n=0 t
+  section "FPGA boards, JTAG / debug adapters and serial ports (USB)"
+  for d in "$SYS/bus/usb/devices"/*; do
+    [ -r "$d/idVendor" ] || continue
+    v=$(cat "$d/idVendor"); p=$(cat "$d/idProduct")
+    name=$(usb_name "$v" "$p") || continue
+    n=$((n + 1))
+    bus=$(cat "$d/busnum" 2>/dev/null); dev=$(cat "$d/devnum" 2>/dev/null)
+    node=$(printf '%s/bus/usb/%03d/%03d' "$DEVD" "${bus:-0}" "${dev:-0}")
+    if [ "$(id -u)" = 0 ]; then acc="untested (run without sudo to check your own access)"
+    elif [ -r "$node" ] && [ -w "$node" ]; then acc=yes
+    else acc=no; fi
+    if [ "$MACHINE" = 1 ]; then printf 'USB\t%s:%s\t%s\t%s\n' "$v" "$p" "$name" "$acc"; continue; fi
+    case "$acc" in
+      yes) rep supported "$v:$p" "$name - you can use it (JTAG/SWD tools work without sudo)" ;;
+      no)  rep unavailable "$v:$p" "$name - your account cannot open it" "Log out and in once (RustOS gives the person at the PC access), or check: udevadm info $node" ;;
+      *)   rep untested "$v:$p" "$name - $acc" ;;
+    esac
+  done
+  [ "$n" -gt 0 ] || rep info "USB adapters" "No known FPGA/JTAG/debug adapter is plugged in (unknown ones still work with sudo)"
+  t=""
+  for d in "$DEVD"/ttyUSB* "$DEVD"/ttyACM*; do [ -e "$d" ] && t="$t ${d##*/}"; done
+  local u; u=$(target_user); u=${u:-$(id -un)}
+  if in_group uucp "$u"; then rep supported "serial ports" "$u is in the uucp group: board consoles (${t# }) open without sudo"
+  else rep unavailable "serial ports" "$u is not in the uucp group, so /dev/ttyUSB* and /dev/ttyACM*${t:+ (now:$t)} need sudo" "sudo $ME access $u  (then log out and in)"; fi
+}
+
+# ------------------------------------------------------------------ DKMS
+dkms_status() {
+  local k pb hdr
+  section "Kernels, headers and DKMS"
+  for k in "$MODS"/*/; do
+    k=${k%/}; k=${k##*/}
+    [ -e "$MODS/$k/pkgbase" ] || [ -e "$MODS/$k/modules.dep" ] || continue
+    pb=$(pkgbase "$k")
+    if [ -d "$MODS/$k/build" ]; then hdr="headers installed"; else hdr="no headers (out-of-tree drivers cannot be built: sudo pacman -S $pb-headers)"; fi
+    rep info "kernel $pb" "$k$([ "$k" = "$KREL" ] && echo " (running)") - $hdr"
+  done
+  if ! have dkms; then
+    rep info "DKMS" "not installed (only needed for out-of-tree drivers, like vendor DMA drivers)" "sudo pacman -S dkms   (or RustOS Center, Hardware dev, Developer kernel)"
+    return
+  fi
+  local out line
+  out=$(dkms status 2>/dev/null)
+  if [ -z "$out" ]; then rep info "DKMS modules" "DKMS is installed, no modules added yet"; return; fi
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in
+      *"$KREL"*installed*) rep supported "DKMS" "$line" ;;
+      *"$KREL"*)           rep unavailable "DKMS" "$line" "sudo $ME dkms build $KREL   (the error log is in /var/lib/dkms/<module>/<version>/build/make.log)" ;;
+      *)                   rep info "DKMS" "$line" ;;
+    esac
+  done <<<"$out"
+  # modules added to DKMS that have nothing for the running kernel
+  local m
+  while IFS= read -r m; do
+    [ -n "$m" ] || continue
+    grep -q "^$m.*$KREL" <<<"$out" || rep unavailable "DKMS $m" "not built for the running kernel $KREL" "sudo $ME dkms build $KREL"
+  done < <(sed -E 's/[,:].*//' <<<"$out" | sort -u)
+}
+
+cmd_dkms() {
+  case "${1:-status}" in
+    status) dkms_status ;;
+    build)
+      need_root dkms build
+      local k=${2:-$KREL} pb
+      have dkms || die "DKMS is not installed. Install it with: sudo pacman -S dkms"
+      [ -d "$MODS/$k" ] || die "there is no kernel $k in $MODS (installed: $(ls "$MODS" | tr '\n' ' '))"
+      pb=$(pkgbase "$k")
+      [ -d "$MODS/$k/build" ] || die "the headers for $k are missing. Install them first: sudo pacman -S $pb-headers"
+      echo "== Building DKMS modules for $k ($pb)"
+      if dkms autoinstall -k "$k"; then
+        echo "== Result"; dkms status -k "$k"
+        if dkms status -k "$k" 2>/dev/null | grep -qv 'installed'; then
+          echo "Some modules are not installed for $k. Their build logs: /var/lib/dkms/<module>/<version>/build/make.log"; exit 1
+        fi
+        echo "Done."
+      else
+        echo "DKMS could not build everything for $k."
+        echo "Look at /var/lib/dkms/<module>/<version>/build/make.log. A vendor driver that is too old for this kernel"
+        echo "often builds on the LTS kernel: RustOS Center, Hardware dev, Developer kernel."
+        exit 1
+      fi ;;
+    *) echo "Use: $ME dkms [status | build [kernel]]"; exit 2 ;;
+  esac
+}
+
+# ------------------------------------------------------------------ the full report
+cmd_check() {
+  local v st grp units g off mlim memkb need fix
+  kconf_load; mods_load
+  [ "$MACHINE" = 1 ] || {
+    printf '%s%sRustOS hardware development check%s  (rustos-devhw, %s)\n' "$B" "$OR" "$R0" "$(date '+%F %T')"
+    printf '%ssupported = present and working as far as RustOS can check   unavailable = missing or off (with a fix)\n' "$D"
+    printf 'untested = present, but it needs your hardware or driver to really test it%s\n' "$R0"
+  }
+
+  section "Kernel"
+  rep info "kernel" "Linux $KREL ($(pkgbase)) on $ARCH$( [ -n "$(virt)" ] && echo ", virtual machine: $(virt)")"
+  if [ -d "$MODS/$KREL" ]; then rep supported "kernel modules" "modules for the running kernel are installed ($MODS/$KREL)"
+  elif [ -n "$(ls -A "$MODS" 2>/dev/null)" ]; then
+    rep unavailable "kernel modules" "the modules of the running kernel ($KREL) are gone: the kernel was updated and the PC was not restarted yet" \
+      "Restart the PC. Until then no new driver can be loaded."
+  else
+    rep unavailable "kernel modules" "there are no kernel modules on this system at all (a container, or a kernel not from a package)" \
+      "On RustOS: sudo pacman -S linux, then restart"
+  fi
+  local hp; hp=$(pkgbase); [ "$hp" = "?" ] && hp=linux
+  if [ -d "$MODS/$KREL/build" ]; then rep supported "kernel headers" "headers for $KREL are installed (DKMS and own drivers can be built)"
+  else rep unavailable "kernel headers" "no headers for $KREL: out-of-tree drivers cannot be built" "sudo pacman -S $hp-headers"; fi
+  case "$(kc MODULE_SIG_FORCE)" in
+    y) rep info "module signatures" "enforced: only signed modules load (DKMS modules must be signed)" ;;
+    n) if has_arg module.sig_enforce=1; then rep info "module signatures" "enforced by module.sig_enforce=1"; else rep info "module signatures" "not enforced: your own and DKMS modules load (the kernel marks itself tainted)"; fi ;;
+    *) rep untested "module signatures" "unknown (the kernel configuration cannot be read)" ;;
+  esac
+  local sb; sb=$(od -An -t u1 -j4 -N1 "$SYS"/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-e98c0c3b0c8c 2>/dev/null | tr -d ' ')
+  case "$sb" in 1) rep info "Secure Boot" "on" ;; 0) rep info "Secure Boot" "off" ;; *) rep info "Secure Boot" "unknown (BIOS boot or no EFI variables)" ;; esac
+  [ -r "$SYS/kernel/security/lockdown" ] && rep info "kernel lockdown" "$(cat "$SYS/kernel/security/lockdown")"
+
+  section "IOMMU (DMA protection)"
+  grp=$(iommu_groups); units=$(iommu_units)
+  if off=$(iommu_off_arg); then
+    rep unavailable "IOMMU" "turned off on the kernel command line ($off)" "Remove $off from the kernel options and restart (RustOS never adds it)"
+  elif [ "$grp" -gt 0 ]; then
+    rep supported "IOMMU" "active: $grp IOMMU groups${units:+ (units: ${units% })} - devices can only reach the memory they are given"
+    local types; types=$(cat "$SYS"/kernel/iommu_groups/*/type 2>/dev/null | sort | uniq -c | awk '{printf "%s%s x%s", (NR>1?", ":""), $2, $1}')
+    [ -n "$types" ] && rep info "IOMMU mode" "$types  (DMA / DMA-FQ = translated; identity = pass-through for host drivers)"
+  else
+    rep unavailable "IOMMU" "not active" "$(iommu_fix)"
+  fi
+  if noiommu_on; then rep unavailable "VFIO no-IOMMU mode" "ON - devices would have unrestricted DMA. RustOS refuses to assign devices while it is on" \
+                        "Remove vfio.enable_unsafe_noiommu_mode from the kernel options or modprobe settings and restart"
+  else rep supported "VFIO no-IOMMU mode" "off (good: RustOS never turns it on)"; fi
+  local nc; nc=$(noiommu_configured)
+  [ -n "$nc" ] && rep unavailable "modprobe settings" "$nc turns VFIO no-IOMMU mode on" "Delete that line, then restart"
+  case "$(kc STRICT_DEVMEM)" in
+    y) rep info "/dev/mem" "restricted by the kernel (STRICT_DEVMEM$( [ "$(kc IO_STRICT_DEVMEM)" = y ] && echo ", IO_STRICT_DEVMEM")). RustOS never uses /dev/mem" ;;
+    n) rep info "/dev/mem" "not restricted by this kernel. RustOS never uses it: use VFIO for device access" ;;
+    *) rep info "/dev/mem" "RustOS never uses it: use VFIO for device access" ;;
+  esac
+
+  section "VFIO (giving a PCIe device to a program or a development VM)"
+  local m s miss=""
+  for m in vfio vfio_pci vfio_iommu_type1 iommufd; do
+    s=$(mod_state "$m")
+    case "$s" in
+      loaded)    rep supported "module $m" "loaded" ;;
+      builtin)   rep supported "module $m" "built into the kernel" ;;
+      available) rep supported "module $m" "available (loads when a device is given to VFIO)" ;;
+      nomoddir)  rep unavailable "module $m" "cannot be checked: the modules of the running kernel are gone" "Restart the PC"; miss="$miss $m" ;;
+      *) if [ "$m" = iommufd ] || [ "$m" = vfio_iommu_type1 ]; then rep info "module $m" "not in this kernel (newer kernels use the other one)"
+         else rep unavailable "module $m" "missing from kernel $KREL" "Use the standard Arch kernel or the LTS developer kernel (RustOS Center, Hardware dev)"; miss="$miss $m"; fi ;;
+    esac
+  done
+  if noiommu_on; then rep unavailable "VFIO assignment" "off: no-IOMMU mode is on"
+  elif ! iommu_active; then rep unavailable "VFIO assignment" "needs an active IOMMU (see above)" "$(iommu_fix)"
+  elif [ -n "$miss" ]; then rep unavailable "VFIO assignment" "modules missing:$miss"
+  else rep supported "VFIO assignment" "ready: sudo $ME vfio bind <slot>   (or RustOS Center, Hardware dev)"; fi
+  mlim=$(ulimit -l)
+  memkb=$(awk '/^MemTotal:/ {print $2}' "$PROC/meminfo" 2>/dev/null); memkb=${memkb:-0}
+  need=$((memkb / 2))
+  if [ "$mlim" = unlimited ] || { [ "$mlim" -ge "$need" ] 2>/dev/null && [ "$need" -gt 0 ]; }; then
+    rep supported "locked memory" "limit $mlim KiB: enough for VFIO DMA buffers"
+  else
+    rep info "locked memory" "limit ${mlim} KiB for this session. VFIO pins every DMA buffer (a VM pins all its RAM)" \
+      "sudo $ME access --vfio <user> raises it to half the RAM for the rustos-vfio group"
+  fi
+  local u; u=$(target_user); u=${u:-$(id -un)}
+  if getent group rustos-vfio >/dev/null 2>&1; then
+    if in_group rustos-vfio "$u"; then rep supported "VFIO access" "$u is in rustos-vfio: devices given to VFIO open without sudo"
+    else rep info "VFIO access" "$u is not in rustos-vfio (only needed to use /dev/vfio without sudo)" "sudo $ME access --vfio $u"; fi
+  else rep info "VFIO access" "the rustos-vfio group does not exist yet (made by the RustOS update)"; fi
+  if [ -s "$VFIO_CONF" ]; then rep info "kept for VFIO" "$(awk '{printf "%s%s", (NR>1?", ":""), $1}' "$VFIO_CONF") (given to VFIO at every start)"; fi
+
+  section "Kernel configuration${KCONF_SRC:+ ($KCONF_SRC)}"
+  local o val
+  for o in IOMMU_SUPPORT INTEL_IOMMU INTEL_IOMMU_DEFAULT_ON AMD_IOMMU IOMMUFD VFIO VFIO_PCI VFIO_NOIOMMU PCI_P2PDMA \
+           DMA_ENGINE XILINX_XDMA FPGA UIO UIO_PCI_GENERIC USB_SERIAL_FTDI_SIO USB_ACM; do
+    val=$(kc "$o")
+    case "$o:$val" in
+      *:\?) rep untested "CONFIG_$o" "unknown: the kernel configuration cannot be read" "It is in /proc/config.gz on Arch kernels" ;;
+      VFIO_NOIOMMU:[ym]) rep info "CONFIG_$o" "$val (the unsafe mode exists in the kernel; RustOS never turns it on)" ;;
+      UIO:[ym]|UIO_PCI_GENERIC:[ym]) rep info "CONFIG_$o" "$val (UIO has no DMA protection: RustOS uses VFIO for DMA devices)" ;;
+      XILINX_XDMA:[ym]) rep untested "CONFIG_$o" "$val (the mainline dmaengine driver used by some boards; Xilinx's own XDMA/QDMA PCIe driver is separate, via DKMS)" ;;
+      *:[ym]) rep supported "CONFIG_$o" "$val" ;;
+      INTEL_IOMMU_DEFAULT_ON:n) rep info "CONFIG_$o" "not set (Intel PCs need intel_iommu=on: sudo $ME iommu-on)" ;;
+      INTEL_IOMMU:n) if [ "$(cpu_vendor)" = intel ]; then rep unavailable "CONFIG_$o" "not set: this kernel cannot use the Intel IOMMU" "Use the standard Arch kernel or the LTS developer kernel"; else rep info "CONFIG_$o" "not set (not needed: no Intel CPU)"; fi ;;
+      AMD_IOMMU:n)   if [ "$(cpu_vendor)" = amd ]; then rep unavailable "CONFIG_$o" "not set: this kernel cannot use the AMD IOMMU" "Use the standard Arch kernel or the LTS developer kernel"; else rep info "CONFIG_$o" "not set (not needed: no AMD CPU)"; fi ;;
+      IOMMU_SUPPORT:n|VFIO:n|VFIO_PCI:n) rep unavailable "CONFIG_$o" "not set: VFIO device assignment cannot work with this kernel" "Use the standard Arch kernel or the LTS developer kernel" ;;
+      USB_SERIAL_FTDI_SIO:n|USB_ACM:n) rep unavailable "CONFIG_$o" "not set: USB serial consoles of FPGA boards will not appear" "Use the standard Arch kernel" ;;
+      *:n) rep info "CONFIG_$o" "not set" ;;
+      *) rep info "CONFIG_$o" "$val" ;;
+    esac
+  done
+
+  cmd_devices
+  cmd_usb
+  dkms_status
+
+  section "FPGA tools"
+  local t c
+  for t in yosys:yosys iverilog:iverilog verilator:verilator gtkwave:gtkwave openFPGALoader:openfpgaloader; do
+    c=${t%%:*}
+    if have "$c"; then rep supported "$c" "installed"
+    else rep info "$c" "not installed" "RustOS Apps, FPGA and hardware (or: sudo pacman -S ${t#*:})"; fi
+  done
+  if compgen -c nextpnr- >/dev/null 2>&1; then rep supported "nextpnr" "installed ($(compgen -c nextpnr- | sort -u | tr '\n' ' '))"
+  else rep info "nextpnr" "not installed (not in the Arch repositories)" "Use the OSS CAD Suite or the AUR (see /usr/share/rustos/hardware-dev.txt)"; fi
+
+  if [ "$MACHINE" = 1 ]; then
+    printf 'SUMMARY\t%s\t%s\t%s\n' "$N_SUP" "$N_UNA" "$N_UNT"
+  else
+    printf '\n%s%d supported%s, %s%d unavailable%s, %s%d untested%s\n' "$GR" "$N_SUP" "$R0" "$RD" "$N_UNA" "$R0" "$YL" "$N_UNT" "$R0"
+    printf '%sThis checks the OS and the kernel. A real DMA transfer is only tested with your device, its driver and your test program.%s\n' "$D" "$R0"
+  fi
+}
+
+# ------------------------------------------------------------------ VFIO: give a device to VFIO and back
+write_sys() { printf '%s' "$2" > "$1" 2>/dev/null; }
+
+vfio_bind() {   # vfio_bind SLOT [quiet]
+  local s=$1 drv g why
+  if ! why=$(vfio_check "$s"); then
+    echo "RustOS will not give $s to VFIO:"; sed 's/^/  - /' <<<"$why"; return 1
+  fi
+  drv=$(pci_driver "$s"); g=$(pci_group "$s")
+  if [ "$drv" = vfio-pci ]; then echo "$s is already given to VFIO: /dev/vfio/$g"; return 0; fi
+  case "$(mod_state vfio_pci)" in loaded|builtin) ;; *) modprobe vfio-pci || { echo "Could not load vfio-pci (see: dmesg | tail)"; return 1; } ;; esac
+  write_sys "$(pdev "$s")/driver_override" vfio-pci || { echo "Could not set the driver for $s"; return 1; }
+  if [ -n "$drv" ]; then write_sys "$(pdev "$s")/driver/unbind" "$s" || { echo "Could not take $s from $drv"; write_sys "$(pdev "$s")/driver_override" $'\n'; return 1; }; fi
+  write_sys "$SYS/bus/pci/drivers_probe" "$s"
+  if [ "$(pci_driver "$s")" = vfio-pci ]; then
+    echo "Done: $s now belongs to VFIO (IOMMU group $g): /dev/vfio/$g"
+    [ -n "$drv" ] && echo "(It used the $drv driver. Give it back with: sudo $ME vfio release $s)"
+    return 0
+  fi
+  echo "vfio-pci did not take $s (see: dmesg | tail). Putting it back."
+  write_sys "$(pdev "$s")/driver_override" $'\n'
+  write_sys "$SYS/bus/pci/drivers_probe" "$s"
+  return 1
+}
+
+vfio_release() {
+  local s=$1
+  [ -d "$(pdev "$s")" ] || die "there is no PCI device $s"
+  if [ "$(pci_driver "$s")" = vfio-pci ]; then write_sys "$(pdev "$s")/driver/unbind" "$s"; fi
+  write_sys "$(pdev "$s")/driver_override" $'\n'
+  write_sys "$SYS/bus/pci/drivers_probe" "$s"
+  echo "$s is back with $(pci_driver "$s" || echo "no driver (it may need a restart)")."
+}
+
+cmd_vfio() {
+  local sub=${1:-list} s
+  case "$sub" in
+    list)
+      if [ -s "$VFIO_CONF" ]; then echo "Given to VFIO at every start:"; sed 's/^/  /' "$VFIO_CONF"; else echo "No devices are given to VFIO at start."; fi
+      return 0 ;;
+    bind|release|keep|forget)
+      need_root vfio "$sub"
+      s=$(norm_slot "${2:-}") || true
+      [ -n "$s" ] || die "give the PCI slot, like 0000:03:00.0 (see: $ME devices)"
+      kconf_load; mods_load ;;
+    apply-boot) need_root vfio apply-boot; kconf_load; mods_load ;;
+    *) echo "Use: $ME vfio list | bind <slot> | release <slot> | keep <slot> | forget <slot>"; exit 2 ;;
+  esac
+  case "$sub" in
+    bind)    vfio_bind "$s" ;;
+    release) vfio_release "$s" ;;
+    keep)
+      local why
+      if ! why=$(vfio_check "$s"); then echo "RustOS will not keep $s for VFIO:"; sed 's/^/  - /' <<<"$why"; exit 1; fi
+      vfio_bind "$s" || { echo "Not kept, because it could not be given to VFIO now."; exit 1; }
+      mkdir -p "${VFIO_CONF%/*}"
+      touch "$VFIO_CONF"
+      sed -i "/^$s /d" "$VFIO_CONF"
+      echo "$s $(pci_ids "$s")" >> "$VFIO_CONF"
+      systemctl enable rustos-vfio.service >/dev/null 2>&1 || true
+      echo "RustOS gives $s to VFIO at every start now (undo: sudo $ME vfio forget $s)." ;;
+    forget)
+      [ -f "$VFIO_CONF" ] && sed -i "/^$s /d" "$VFIO_CONF"
+      [ -s "$VFIO_CONF" ] || systemctl disable rustos-vfio.service >/dev/null 2>&1 || true
+      echo "$s is no longer given to VFIO at start. (It stays with VFIO until you run: sudo $ME vfio release $s, or restart.)" ;;
+    apply-boot)
+      [ -s "$VFIO_CONF" ] || exit 0
+      local ids bad=0
+      while read -r s ids; do
+        [ -n "$s" ] || continue
+        case "$s" in \#*) continue ;; esac
+        if [ "$(pci_ids "$s")" != "$ids" ]; then
+          echo "skipping $s: the device there is now $(pci_ids "$s"), not $ids (card moved or changed?)"; bad=1; continue
+        fi
+        vfio_bind "$s" || bad=1
+      done < "$VFIO_CONF"
+      exit $bad ;;
+  esac
+}
+
+# ------------------------------------------------------------------ board access (serial, JTAG, optional VFIO)
+cmd_access() {
+  local vfio=0 remove=0 u="" a memkb
+  for a in "$@"; do
+    case "$a" in --vfio) vfio=1 ;; --remove) remove=1 ;; -*) die "unknown option $a" ;; *) u=$a ;; esac
+  done
+  need_root access
+  u=${u:-$(target_user)}
+  [ -n "$u" ] || die "which user? Use: sudo $ME access <user>"
+  id "$u" >/dev/null 2>&1 || die "there is no user $u"
+  if [ "$remove" = 1 ]; then
+    gpasswd -d "$u" uucp >/dev/null 2>&1 && echo "$u: serial ports need sudo again."
+    [ "$vfio" = 1 ] && gpasswd -d "$u" rustos-vfio >/dev/null 2>&1 && echo "$u: removed from rustos-vfio."
+    echo "Log out and in for this to apply."
+    return 0
+  fi
+  getent group uucp >/dev/null 2>&1 || groupadd -r uucp
+  usermod -aG uucp "$u" && echo "$u can open USB serial ports (/dev/ttyUSB*, /dev/ttyACM*): FPGA board consoles."
+  echo "JTAG / debug adapters (FTDI, Xilinx, Intel, Digilent, J-Link, CMSIS-DAP) work for whoever is logged in at the PC."
+  if [ "$vfio" = 1 ]; then
+    getent group rustos-vfio >/dev/null 2>&1 || systemd-sysusers rustos-dev.conf >/dev/null 2>&1 || groupadd -r rustos-vfio
+    usermod -aG rustos-vfio "$u" && echo "$u can open devices that root gave to VFIO (/dev/vfio/N). Nothing else changes."
+    memkb=$(awk '/^MemTotal:/ {print $2}' "$PROC/meminfo" 2>/dev/null)
+    memkb=$(( ${memkb:-0} / 2 ))
+    [ "$memkb" -gt 65536 ] || memkb=65536
+    mkdir -p "${LIMITS%/*}"
+    printf '# RustOS: VFIO pins DMA buffers in memory (a VM pins all of its RAM). Limit for the rustos-vfio group: half the RAM.\n@rustos-vfio soft memlock %s\n@rustos-vfio hard memlock %s\n' \
+      "$memkb" "$memkb" > "$LIMITS"
+    echo "Locked-memory limit for rustos-vfio: $memkb KiB (half the RAM)."
+  fi
+  if have udevadm; then udevadm control --reload >/dev/null 2>&1; udevadm trigger --subsystem-match=usb --action=change >/dev/null 2>&1; fi
+  echo "Log out and in once so the new groups apply."
+}
+
+# ------------------------------------------------------------------ Intel: use the IOMMU
+add_karg() {   # add_karg FILE LINE-REGEX SED-SUBSTITUTION WORD   (only on lines matching LINE-REGEX, only once)
+  grep -qE "$2" "$1" 2>/dev/null || return 0
+  grep -E "$2" "$1" | grep -qE "(^|[[:space:]\"])$4([[:space:]\"]|\$)" && return 0
+  sed -i -E "/$2/ $3" "$1"
+}
+cmd_iommu_on() {
+  need_root iommu-on
+  [ "$ARCH" = x86_64 ] || die "only for Intel PCs."
+  if iommu_active; then echo "The IOMMU is already active ($(iommu_groups) groups). Nothing to do."; return 0; fi
+  if off=$(iommu_off_arg); then echo "Note: the kernel options contain $off. Remove it to turn the IOMMU on."; fi
+  [ "$(cpu_vendor)" = intel ] || { echo "This is not an Intel PC: $(iommu_fix)"; return 0; }
+  kconf_load
+  local bl="" f files=() rx
+  [ -r "$BLCONF" ] && bl=$(sed -n 's/^BOOTLOADER=//p' "$BLCONF")
+  local w=intel_iommu=on sub
+  case "$bl" in
+    grub)         files=("$ETC/default/grub"); rx='^GRUB_CMDLINE_LINUX_DEFAULT='
+                  sub="s/^(GRUB_CMDLINE_LINUX_DEFAULT=\")([^\"]*)\"/\\1\\2 $w\"/" ;;
+    systemd-boot) for f in "$R"/boot/loader/entries/*.conf; do [ -f "$f" ] && files+=("$f"); done; rx='^options '; sub="s/[[:space:]]*\$/ $w/" ;;
+    limine)       for f in "$R"/boot/EFI/BOOT/limine.conf "$R"/boot/limine/limine.conf; do [ -f "$f" ] && files+=("$f"); done
+                  rx='^ *(cmdline|kernel_cmdline):'; sub="s/[[:space:]]*\$/ $w/" ;;
+    refind)       [ -f "$R/boot/refind_linux.conf" ] && files=("$R/boot/refind_linux.conf"); rx='^"'
+                  sub="s/^(\"[^\"]*\"[[:space:]]+\"[^\"]*)\"/\\1 $w\"/" ;;
+    *) die "unknown boot loader (no $BLCONF). Add intel_iommu=on to the kernel options by hand." ;;
+  esac
+  [ "${#files[@]}" -gt 0 ] || die "could not find the boot loader settings for $bl."
+  for f in "${files[@]}"; do cp -p "$f" "$f.rustos-bak"; add_karg "$f" "$rx" "$sub" "$w"; done
+  if [ "$bl" = grub ] && [ -z "$R" ]; then grub-mkconfig -o /boot/grub/grub.cfg >/dev/null || die "grub-mkconfig failed (the old settings are in /etc/default/grub.rustos-bak)"; fi
+  echo "Added intel_iommu=on to the $bl kernel options. Turn on VT-d in the firmware settings too, then restart."
+  echo "(RustOS keeps full DMA translation: it does not add iommu=pt.)"
+}
+
+# ------------------------------------------------------------------ main
+args=()
+for a in "$@"; do [ "$a" = --machine ] && MACHINE=1 || args+=("$a"); done
+set -- "${args[@]+"${args[@]}"}"
+case "${1:-check}" in
+  check|"")   cmd_check ;;
+  devices)    kconf_load; mods_load; cmd_devices ;;
+  usb)        cmd_usb ;;
+  vfio)       shift; cmd_vfio "$@" ;;
+  access)     shift; cmd_access "$@" ;;
+  iommu-on)   cmd_iommu_on ;;
+  dkms)       shift; mods_load; cmd_dkms "$@" ;;
+  help|-h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "Unknown command: $1   (try: $ME help)"; exit 2 ;;
+esac

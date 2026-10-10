@@ -32,6 +32,8 @@ KBD_X=${KBD_X:-us}
 KBD_CON=${KBD_CON:-us}
 NVIDIA=${NVIDIA:-0}
 HYBRID=${HYBRID:-0}
+DEVHW=${DEVHW:-}                       # optional hardware development: fpga access lts
+devhw() { case " $DEVHW " in *" $1 "*) return 0 ;; esac; return 1; }
 # Dual boot / advanced: shared EFI partition -> GRUB only (it finds Windows and the other loaders won't fit a small ESP)
 SHARED_ESP=0
 if [ "$MODE" != whole ]; then BOOTLOADER=grub; SHARED_ESP=1; fi
@@ -149,6 +151,13 @@ if [ "$NVIDIA" = 1 ]; then
   [ "$HYBRID" = 1 ] && PKGS+=(nvidia-prime)
 fi
 case "$LOCALE" in ja_*|ko_*|zh_*) PKGS+=(noto-fonts-cjk) ;; esac
+# optional hardware development: only names that really exist (pacstrap stops on a missing one)
+dev=()
+devhw fpga && dev+=(yosys iverilog verilator gtkwave openfpgaloader)
+devhw lts  && dev+=(linux-lts linux-lts-headers linux-headers dkms)
+for p in "${dev[@]}"; do
+  if pacman --config "$PACCONF" -Si "$p" >/dev/null 2>&1; then PKGS+=("$p"); else echo "  (skipping $p - not in the repositories)"; fi
+done
 PSARGS=(-C "$PACCONF")
 [ "$USE_REPO" = 1 ] || PSARGS+=(-K)      # with the repo, the live keyring (incl. the RustOS key) is copied instead
 
@@ -187,7 +196,8 @@ else
   install -Dm644 /etc/systemd/system/rustos-update.timer   /mnt/etc/systemd/system/rustos-update.timer
   install -Dm644 /etc/pacman.d/hooks/rustos-bootloader.hook /mnt/etc/pacman.d/hooks/rustos-bootloader.hook
   for f in rustos-update-event rustos-update-notify rustos-update-center rustos-gaming \
-           rustos-restorepoint rustos-rollback rustos-run-exe rustos-apps rustos-switch rustos-education rustos-antivirus rustos-exe-center rustos-ipad-mode rustos-debug rustos-bootsplash rustos-channel; do
+           rustos-restorepoint rustos-rollback rustos-run-exe rustos-apps rustos-switch rustos-education rustos-antivirus rustos-exe-center rustos-ipad-mode rustos-debug rustos-bootsplash rustos-channel \
+           rustos-performance rustos-game rustos-center rustos-devhw; do
     install -Dm755 "/usr/local/bin/$f" "/mnt/usr/local/bin/$f"
   done
   for f in etc/pacman.d/hooks/rustos-update-event.hook \
@@ -208,12 +218,17 @@ else
            usr/share/plymouth/themes/rustos/logo.png usr/share/plymouth/themes/rustos/word.png usr/share/plymouth/themes/rustos/glow.png \
            usr/share/plymouth/themes/rustos/bar-bg.png usr/share/plymouth/themes/rustos/bar-fg.png usr/share/plymouth/themes/rustos/box.png \
            usr/share/plymouth/themes/rustos/field.png usr/share/plymouth/themes/rustos/bullet.png \
-           usr/share/kio/servicemenus/rustos-run-game.desktop usr/share/kio/servicemenus/rustos-scan-virus.desktop; do
+           usr/share/kio/servicemenus/rustos-run-game.desktop usr/share/kio/servicemenus/rustos-scan-virus.desktop \
+           usr/share/rustos/center/center_core.py usr/share/rustos/center/rustos_center.py usr/share/applications/rustos-center.desktop \
+           etc/gamemode.ini etc/udev/rules.d/61-rustos-power.rules etc/systemd/system/rustos-performance.service \
+           etc/udev/rules.d/70-rustos-fpga.rules etc/udev/rules.d/71-rustos-vfio.rules usr/lib/sysusers.d/rustos-dev.conf \
+           etc/systemd/system/rustos-vfio.service usr/share/rustos/hardware-dev.txt; do
     install -Dm644 "/$f" "/mnt/$f"
   done
   mkdir -p /mnt/etc/systemd/user/default.target.wants /mnt/var/lib/rustos
   ln -sf rustos-debug /mnt/usr/local/bin/.debug
   install -Dm644 /usr/share/bash-completion/completions/rustos-debug /mnt/usr/share/bash-completion/completions/.debug
+  install -Dm644 /usr/share/bash-completion/completions/rustos-debug /mnt/usr/share/bash-completion/completions/rustos-devhw
   ln -sf ../rustos-update-notify.path    /mnt/etc/systemd/user/default.target.wants/rustos-update-notify.path
   ln -sf ../rustos-update-notify.service /mnt/etc/systemd/user/default.target.wants/rustos-update-notify.service
 fi
@@ -250,7 +265,7 @@ Options=$KBD_OPTS
 EOF
 
 arch-chroot /mnt /usr/bin/env \
-  RU="$RUSTOS_USER" FN="${FULLNAME//[:,]/ }" PH="$PASSHASH" TZ_="$TZ_" HOST_="$HOST_" LOC="$LOCALE" KM="$KBD_CON" \
+  RU="$RUSTOS_USER" FN="${FULLNAME//[:,]/ }" PH="$PASSHASH" TZ_="$TZ_" HOST_="$HOST_" LOC="$LOCALE" KM="$KBD_CON" DEVHW="$DEVHW" \
   bash -s <<'CHROOT'
 set -e
 ln -sf "/usr/share/zoneinfo/$TZ_" /etc/localtime
@@ -264,6 +279,8 @@ echo "$HOST_" > /etc/hostname
 printf '127.0.0.1 localhost\n::1 localhost\n127.0.1.1 %s\n' "$HOST_" > /etc/hosts
 
 useradd -m -G wheel,audio,video -c "$FN" -s /bin/bash "$RU"
+# hardware development, board access: USB serial consoles (/dev/ttyUSB*, /dev/ttyACM*) belong to the uucp group
+case " $DEVHW " in *" access "*) getent group uucp >/dev/null || groupadd -r uucp; usermod -aG uucp "$RU" ;; esac
 echo "$RU:$PH" | chpasswd -e
 passwd -l root >/dev/null
 echo '%wheel ALL=(ALL:ALL) ALL' > /etc/sudoers.d/10-wheel
@@ -272,6 +289,7 @@ chmod 440 /etc/sudoers.d/10-wheel
 systemctl enable sddm NetworkManager bluetooth systemd-timesyncd fstrim.timer
 systemctl enable rustos-update.timer reflector.timer paccache.timer
 systemctl enable power-profiles-daemon || true
+systemctl enable rustos-performance.service || true      # RustOS 3.0 power and game settings
 if [ "$(systemd-detect-virt 2>/dev/null)" = microsoft ]; then
   systemctl enable hv_kvp_daemon hv_vss_daemon hv_fcopy_daemon || true
 fi
@@ -281,7 +299,7 @@ CHROOT
 step 5 "Installing the boot loader ($BOOTLOADER)"
 ROOT_UUID=$(blkid -s UUID -o value "$ROOT")
 arch-chroot /mnt /usr/bin/env UEFI="$UEFI" DISK="$DISK" ESP="${ESP:-}" ESP_DIR="$ESP_DIR" SHARED_ESP="$SHARED_ESP" \
-  ROOT_UUID="$ROOT_UUID" BOOTLOADER="$BOOTLOADER" bash -s <<'CHROOT'
+  ROOT_UUID="$ROOT_UUID" BOOTLOADER="$BOOTLOADER" DEVHW="$DEVHW" bash -s <<'CHROOT'
 set -e
 KARGS="root=UUID=$ROOT_UUID rw quiet"
 USED="$BOOTLOADER"
@@ -379,6 +397,12 @@ mkdir -p /etc/rustos
 # the RustOS boot screen (logo + progress bar); "rustos-bootsplash off" turns it off
 mkdir -p /var/lib/rustos && touch /var/lib/rustos/bootsplash-auto
 if [ -x /usr/local/bin/rustos-bootsplash ]; then /usr/local/bin/rustos-bootsplash on --quiet || echo "(boot screen skipped)"; fi
+# developer kernel: make linux-lts the default boot entry (the normal kernel stays as a backup) and build DKMS modules
+case " $DEVHW " in *" lts "*)
+  if pacman -Q linux-lts >/dev/null 2>&1 && [ -x /usr/local/bin/rustos-performance ]; then
+    /usr/local/bin/rustos-performance kernel lts || echo "(developer kernel: could not make it the default - the normal kernel is used)"
+  fi ;;
+esac
 CHROOT
 
 # ---------------------------------------------------------------- 6

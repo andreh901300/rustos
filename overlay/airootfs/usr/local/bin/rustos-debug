@@ -65,6 +65,9 @@ ${B}Look around${R}
   $ME usb | display | sound | bluetooth | ports | env | crash   details for each
   $ME speed             internet speed test   $ME bench   quick CPU and disk test
   $ME clean             free up disk space (old packages, unused parts, caches)
+  $ME power             battery mode, CPU turbo, FPS caps, game boost (RustOS 3.0)
+  $ME dma [devices|usb|dkms]   hardware development: PCIe devices, drivers, IOMMU, VFIO, kernel config, FPGA boards
+  $ME center [page]     open RustOS Center (pages: updates apps gaming power antivirus look mods devhw system)
 
 ${B}Fix things${R}
   $ME fix               list the quick fixes
@@ -109,6 +112,9 @@ cmd_info() {
   kv "Update channel" "$(repo_base || true)"
 }
 boot_loader() {
+  local bl
+  bl=$(sed -n 's/^BOOTLOADER=//p' /etc/rustos/bootloader.conf 2>/dev/null)
+  [ -n "$bl" ] && { echo "$bl"; return; }
   if [ -d /boot/grub ] || [ -d /efi/grub ]; then echo GRUB; return; fi
   if [ -d /boot/loader/entries ] || [ -d /efi/loader/entries ]; then echo systemd-boot; return; fi
   if ls /boot/limine* /boot/EFI/limine >/dev/null 2>&1; then echo Limine; return; fi
@@ -470,13 +476,25 @@ cmd_selftest() {
     if [ -f /usr/share/plymouth/themes/rustos/rustos.script ]; then st_pass "RustOS boot theme is installed"; else st_fail "RustOS boot theme files missing"; fi
     if rustos-bootsplash status 2>/dev/null | grep -q ': ON'; then st_pass "Boot screen is on"
       grep -qw splash /proc/cmdline && st_pass "'splash' is active in this start" || st_warn "Boot screen is set up but this start had no 'splash' (restart once)"
-    else st_warn "Boot screen is off (.debug mod bootsplash on)"; fi
+    elif grep -q 'FAILED' /var/log/rustos-bootsplash.log 2>/dev/null; then
+      st_fail "Turning the boot screen on failed: $(grep FAILED /var/log/rustos-bootsplash.log | tail -n1 | cut -c1-80)"
+    else st_warn "Boot screen is off (turn it on: sudo rustos-bootsplash on)"; fi
   fi
 
   title "iPad mode and touch"
   if [ -f /usr/share/applications/rustos-ipad-mode.desktop ]; then st_pass "iPad Mode is in the menu"; else st_fail "iPad Mode menu entry missing"; fi
-  if grep -lq 'X-KDE-Wayland-VirtualKeyboard=true' /usr/share/applications/*.desktop 2>/dev/null; then st_pass "Touch keyboard is installed"; else st_warn "Touch keyboard (maliit) not installed"; fi
+  if grep -lq 'X-KDE-Wayland-VirtualKeyboard=true' /usr/share/applications/*.desktop 2>/dev/null || pacman -Q maliit-keyboard >/dev/null 2>&1; then
+    st_pass "Touch keyboard is installed"
+  else st_warn "Touch keyboard not installed (needed for touchscreens only: sudo pacman -S maliit-keyboard)"; fi
   st_pass "iPad mode: $(rustos-ipad-mode status 2>/dev/null)"
+
+  title "RustOS Center and power"
+  if have rustos-center && rustos-center --can-start; then st_pass "RustOS Center window can open"
+  elif [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then st_warn "RustOS Center not checked (no desktop in this terminal)"
+  else st_warn "RustOS Center cannot open its window (fix: .debug fix exe), the classic menus are used"; fi
+  if systemctl is-enabled --quiet rustos-performance.service 2>/dev/null; then st_pass "Power and game settings start with the PC"
+  else st_warn "Power settings service is off (fix: sudo systemctl enable --now rustos-performance)"; fi
+  have rustos-performance && st_pass "Power mode: $(rustos-performance get MODE 2>/dev/null), profile: $(powerprofilesctl get 2>/dev/null || echo unknown)"
 
   title "Other"
   if have clamscan; then st_pass "Antivirus is installed"
@@ -514,7 +532,7 @@ cmd_fix() {
   $ME fix grub          rebuild the GRUB boot menu (Windows missing from it?)
   $ME fix bootsplash    the boot screen causes trouble: turn it off
   $ME fix mirrors       downloads are slow: pick the fastest package servers
-  $ME fix exe           the EXE Center window does not open: reinstall what it needs
+  $ME fix exe           the EXE Center or RustOS Center window does not open: reinstall what it needs
 EOF
       ;;
     plasma)
@@ -561,7 +579,7 @@ EOF
       [ "$(uname -m)" = x86_64 ] || { bad "Only for PCs (ARM uses its own servers)"; return 1; }
       need_root reflector --save /etc/pacman.d/mirrorlist --protocol https --latest 20 --sort rate && ok "Fastest servers picked" ;;
     exe)
-      need_root pacman -S --needed --noconfirm python-pyqt6 icoutils && ok "Done. Open RustOS EXE Center again." ;;
+      need_root pacman -S --needed --noconfirm python-pyqt6 icoutils && ok "Done. Open RustOS Center or the EXE Center again." ;;
     *) bad "Unknown fix: $1"; cmd_fix; return 1 ;;
   esac
 }
@@ -781,6 +799,10 @@ case "$sub" in
   boot)               cmd_boot ;;
   temp|temps)         cmd_temp ;;
   battery|bat)        cmd_battery ;;
+  dma|devhw|fpga)     if have rustos-devhw; then if [ -n "${1:-}" ]; then rustos-devhw "$@"; else rustos-devhw check; fi
+                      else bad "rustos-devhw is missing: run a RustOS update"; exit 1; fi ;;
+  power|perf)         rustos-performance status; echo; info "Change it in RustOS Center (Battery and power), or: sudo rustos-performance mode auto|performance|balanced|battery" ;;
+  center)             if [ -n "${1:-}" ]; then setsid -f rustos-center --page "$1" >/dev/null 2>&1; else setsid -f rustos-center >/dev/null 2>&1; fi ;;
   top)                cmd_top ;;
   usb)                cmd_usb ;;
   ports)              cmd_ports ;;

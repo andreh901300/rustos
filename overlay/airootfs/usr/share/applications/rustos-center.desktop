@@ -1,0 +1,24 @@
+[Desktop Entry]
+Type=Application
+Name=RustOS Center
+GenericName=RustOS Settings
+Comment=Updates, apps, gaming, battery, antivirus, look, mods and fixes in one place
+Exec=/usr/local/bin/rustos-center
+Icon=rustos
+Terminal=false
+Categories=System;Settings;
+Keywords=settings;update;battery;gaming;fps;power;antivirus;mods;debug;rustos;
+StartupWMClass=rustos-center
+Actions=updates;gaming;power;
+
+[Desktop Action updates]
+Name=Check for updates
+Exec=/usr/local/bin/rustos-center --page updates
+
+[Desktop Action gaming]
+Name=Gaming and FPS
+Exec=/usr/local/bin/rustos-center --page gaming
+
+[Desktop Action power]
+Name=Battery and power
+Exec=/usr/local/bin/rustos-center --page power

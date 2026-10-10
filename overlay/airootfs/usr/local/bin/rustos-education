@@ -57,6 +57,13 @@ if [ "${1:-}" = --install ]; then
   exit 0
 fi
 
+# ---- RustOS 3.0: this opens as a page in RustOS Center. The menus below are the backup
+#      (used when the window cannot start, or with  --classic  or  RUSTOS_CLASSIC=1).
+[ "${1:-}" = --classic ] && { export RUSTOS_CLASSIC=1; shift; }
+if [ -z "${1:-}" ] && [ -z "${RUSTOS_CLASSIC:-}" ] && /usr/local/bin/rustos-center --can-start; then
+  exec /usr/local/bin/rustos-center --page education
+fi
+
 # ============================================================== web app shortcuts (you, no password needed)
 webapp() { # webapp <id> <Name> <url> <icon>
   local dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
